@@ -3,21 +3,8 @@
     "-r",
     "pylock.toml"
   ],
-  "artifacts": [
-    {
-      "hash": "sha256-KVcu8rHxdYEEazoiJ9XGEfsl7HDKG6hVSySw5pMxpIQ=",
-      "mirrors": [],
-      "path": "packaging-25.0-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl"
-    },
-    {
-      "hash": "sha256-RyHzke2QVB/drKtaz5R6oNPcfSey4ejtor6JcFhsMnQ=",
-      "mirrors": [],
-      "path": "six-1.17.0-py2.py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl"
-    }
-  ],
-  "hash": "sha256-s/syKRTWpkBICJk5Qi+EHSNtGsHZ3H0veAc3PwnBako=",
+  "artifacts": [],
+  "hash": "sha256-iINWP/pp9nqtNgXL5Vzg8pgSZgtLEj69yvJ1h1RL2Tk=",
   "inputs": {
     "pylock.toml": "dd149a6f15a9909dd5078dc9afc8577e7e03d68b46c6c3eeeefcf403e28a3c69"
   },
@@ -35,10 +22,6 @@
   "repositories": [],
   "shims": [],
   "sources": {},
-  "systems": [
-    "x86_64-linux",
-    "aarch64-linux"
-  ],
-  "version": 3,
+  "version": 4,
   "versions": {}
 }

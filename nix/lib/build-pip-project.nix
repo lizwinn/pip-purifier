@@ -96,8 +96,8 @@ let
   lock = purifier.checkLock read;
   file = toString lockFile;
   checked = builtins.seq lock (
-    if !(lib.elem system read.lockfile.systems) then
-      throw "pip-purifier: ${file} has no lock for ${system}; it covers ${toString read.lockfile.systems}. Run `pip-purifier lock`."
+    if !(lib.elem system (attrNames read.lockfile.pins)) then
+      throw "pip-purifier: ${file} has no lock for ${system}; it covers ${toString (attrNames read.lockfile.pins)}. Run `pip-purifier lock`."
     else if python.pythonVersion != read.lockfile.python then
       throw "pip-purifier: ${file} was made for Python ${read.lockfile.python}, and this build uses Python ${python.pythonVersion}. Pass a `python` of version ${read.lockfile.python}, or run `pip-purifier lock --python` with this one."
     else

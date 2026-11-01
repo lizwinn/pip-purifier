@@ -6,8 +6,9 @@
 #
 #   {
 #     purifier = "pip-purifier";
-#     entries  = the downloads (`artifacts`); a wheel for one CPU carries
-#                `systems`, the Nix systems of that CPU;
+#     entries  = the downloads: `artifacts`, and the files that each
+#                pylock.toml among the inputs names; a wheel for one CPU
+#                carries `systems`, the Nix systems of that CPU;
 #     outputs  = the local projects, by name: { path, version, sdist,
 #                wheels.<system> };
 #     problems = why the lockfile cannot be used, each naming the command
@@ -41,7 +42,6 @@ let
     "python"
     "args"
     "inputs"
-    "systems"
     "pins"
     "versions"
     "outputs"
@@ -81,6 +81,42 @@ let
       );
     in
     if !(lib.hasSuffix ".whl" name) || lib.elem "any" platforms then null else systems;
+
+  # The wheels, sdists and archives that a pylock.toml names by URL, as
+  # file entries, at the path that the offline install looks them up by:
+  # the last segment of the URL, without its query or fragment. The lock
+  # run does not repeat them in `artifacts`.
+  pylockEntries =
+    path:
+    let
+      data = builtins.fromTOML (builtins.readFile path);
+      files =
+        package:
+        (package.wheels or [ ])
+        ++ lib.optional (package ? sdist) package.sdist
+        ++ lib.optional (package ? archive) package.archive;
+      # The URL without credentials, as the lock tool records URLs.
+      plain =
+        url:
+        lib.concatStrings (
+          map (part: if builtins.isList part then builtins.head part else part) (
+            builtins.split "^(https?://)[^/@]*@" url
+          )
+        );
+      entry = file: {
+        path = baseNameOf (builtins.head (builtins.split "[?#]" file.url));
+        url = plain file.url;
+        mirrors = [ ];
+        hash = builtins.convertHash {
+          hash = file.hashes.sha256;
+          hashAlgo = "sha256";
+          toHashFormat = "sri";
+        };
+      };
+    in
+    map entry (filter (file: file ? url) (lib.concatMap files (data.packages or [ ])));
+
+  isPylock = rel: builtins.match "pylock(\\.[^/]+)?\\.toml" (baseNameOf rel) != null;
 
   problemOf =
     {
@@ -148,6 +184,14 @@ in
         else
           problemOf { inherit lock lockFile resolve; };
       usable = problem == null;
+
+      # The artifacts, and the files of each pylock.toml among the inputs.
+      # A file that two packages of a pylock.toml name is fetched once.
+      downloads =
+        lock.artifacts
+        ++ lib.unique (
+          lib.concatMap (rel: pylockEntries (resolve rel)) (filter isPylock (attrNames lock.inputs))
+        );
     in
     {
       purifier = "pip-purifier";
@@ -159,7 +203,7 @@ in
               systems = systemsOf artifact.path;
             in
             artifact // lib.optionalAttrs (systems != null) { inherit systems; }
-          ) lock.artifacts
+          ) downloads
         else
           [ ];
       outputs = if usable then lock.outputs.packages else { };

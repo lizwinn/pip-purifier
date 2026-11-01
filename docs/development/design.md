@@ -42,12 +42,20 @@ it, so an edit by hand fails. `args` are the pip install arguments.
 `inputs` maps each file the arguments name (and the `pyproject.toml`,
 `setup.py` and `setup.cfg` of each local project) to its SHA-256; the Nix
 library and the command refuse a lock whose inputs changed. `pins` holds
-`name==version` for each system. `versions` holds the version of each
+`name==version` for each system, and its names are the systems the lock
+covers. `versions` holds the version of each
 package built from a checkout (by requirement URL) or a local directory (by
 path). `outputs` names programs and packages. `sources` maps each VCS or
 URL requirement to its download, `repositories` lists the git repositories
 named in package metadata, and `artifacts` holds every download in the
-entry shapes of the nix-purifiers/purifier library.
+entry shapes of the nix-purifiers/purifier library, except the files that a
+`pylock.toml` among the inputs names: `readLock` reads those from the
+`pylock.toml`.
+
+The versions that a hashed requirement or a `pylock.toml` pins also go to
+pip as `--build-constraint` (`Rewriter.build_constraints` in
+`nix/lib/pip_inputs.py`), in the lock run and in the offline install, so
+the build environments of sdists use the project's versions.
 
 ## The Nix library
 

@@ -483,7 +483,7 @@ def hash_inputs(project, inputs):
 
 # The top-level fields of a lockfile. nix/lib/read-lock.nix requires the
 # same.
-LOCK_FIELDS = ["version", "hash", "pip", "python", "args", "inputs", "systems", "pins", "versions", "outputs", "sources", "artifacts"]
+LOCK_FIELDS = ["version", "hash", "pip", "python", "args", "inputs", "pins", "versions", "outputs", "sources", "artifacts"]
 
 
 def lock_hash(lock):
@@ -702,14 +702,15 @@ def lock(ns):
         artifacts = {}
         sources = {}
         by_name = {normalize(i["metadata"]["name"]): i for i in items}
+        # The files of a pylock.toml, which the lockfile does not repeat:
+        # readLock (nix/lib/read-lock.nix) reads them from the pylock.toml.
+        in_pylock = set()
         for spec in rewriter.specs:
             url = spec["url"]
             if spec["kind"] == "file":
-                sha = spec.get("hashes", {}).get("sha256")
-                if not sha:
+                if not spec.get("hashes", {}).get("sha256"):
                     die(f"{url} in a pylock.toml has no sha256 hash")
-                name = file_name(url)
-                artifacts[name] = {"path": name, "url": strip_credentials(url), "mirrors": [], "hash": sri(bytes.fromhex(sha))}
+                in_pylock.add(os.path.basename(pip_inputs.url_without_fragment(url)))
             elif spec["kind"] == "url":
                 digest = hash_url(pip_inputs.url_without_fragment(url))
                 name = file_name(pip_inputs.url_without_fragment(url))
@@ -826,6 +827,8 @@ def lock(ns):
 
         for entry in proxy.files.values():
             artifacts.setdefault(entry["path"], entry)
+        for name in in_pylock:
+            artifacts.pop(name, None)
 
         lock = {
             "version": FORMAT_VERSION,
@@ -833,7 +836,6 @@ def lock(ns):
             "python": pyver,
             "args": args,
             "inputs": hash_inputs(project, rewriter.inputs),
-            "systems": systems,
             "pins": pins,
             "versions": dict(sorted(versions.items())),
             "outputs": {"programs": programs, "packages": packages},

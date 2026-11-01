@@ -8,9 +8,12 @@ downloaded, and every output the project makes. Nix then builds the project
 offline from it. You commit the lockfile, and no generated Nix files.
 
 pip has no lockfile that records downloads for every system, so
-pip-purifier writes its own. A `pylock.toml` or a requirements file with
-`--hash` pins is one of the inputs that the lockfile records, and its
-versions are the versions that pip-purifier locks.
+pip-purifier writes its own. Where a project has a `pylock.toml` or a
+requirements file with `--hash` pins, those versions are the versions that
+pip-purifier locks, and they also constrain the environments in which pip
+builds sdists, through pip's `--build-constraint`. The files that a
+`pylock.toml` names, with their URLs and hashes, are read from it and not
+repeated in `pip-purifier.lock.json`.
 
 pip-purifier is part of [nix-purifiers](https://nix-purifiers.github.io),
 and meets the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).

@@ -35,7 +35,7 @@
       "url": "https://files.pythonhosted.org/packages/ef/55/6dc6d6bb953bdfc52519a0059592c52b6e3b8ad51cf8256dffceb55b0610/setuptools-84.2.1-py3-none-any.whl"
     }
   ],
-  "hash": "sha256-LhQOuC3BfXSPoqzBVP258wm0JGjKmQ6X6GzLB45zPmo=",
+  "hash": "sha256-5Wvcy6ymx0m2TNG+nudahFOYfuNzGQJfeB17zlLUh8E=",
   "inputs": {
     "pyproject.toml": "b1bc3f7d468a78e28f310460837a39741ad0b58b4b888526a87ea3a4d1d22809",
     "requirements.txt": "0cac0e472eba3359aa79e9674ff11a5fd0484b9c465fc1cb774c30938edcc5d7"
@@ -74,11 +74,7 @@
   "repositories": [],
   "shims": [],
   "sources": {},
-  "systems": [
-    "x86_64-linux",
-    "aarch64-linux"
-  ],
-  "version": 3,
+  "version": 4,
   "versions": {
     ".": "0.1.0"
   }

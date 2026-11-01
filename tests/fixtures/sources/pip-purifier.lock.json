@@ -126,7 +126,7 @@
       "url": "https://files.pythonhosted.org/packages/73/1d/ad4064bf12f4503bf61e65d74c93c523672776d25ee0a06aaf42ae09ef3f/vcs_versioning-2.6.0-py3-none-any.whl"
     }
   ],
-  "hash": "sha256-b1w3fIIl0tZ2x0zACuACkmh96hk1FfmGZSQsrGLDP0A=",
+  "hash": "sha256-zCXFmIcOitLvWgXlPg5d6We9emDUWxZ5S080XpsFxHw=",
   "inputs": {
     "more.txt": "6cd59269626891c6411956235f93f606a06395ed4a79073811f2e1c9be515c95",
     "requirements.txt": "46e1b9de7133678f24ba9de515e1c2918135c9f817b5987e0b1a2db99237d69a",
@@ -177,11 +177,7 @@
     "git+https://github.com/python-attrs/attrs@25.3.0": "vcs/attrs-3dca08ce5bbe",
     "https://github.com/benjaminp/six/archive/refs/tags/1.17.0.tar.gz": "1.17.0.tar.gz"
   },
-  "systems": [
-    "x86_64-linux",
-    "aarch64-linux"
-  ],
-  "version": 3,
+  "version": 4,
   "versions": {
     "git+https://github.com/python-attrs/attrs@25.3.0": "25.3.0",
     "vendor/localdir": "0.3.0"

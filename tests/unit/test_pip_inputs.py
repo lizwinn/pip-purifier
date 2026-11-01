@@ -151,7 +151,29 @@ class RewriterTest(unittest.TestCase):
         self.assertEqual(args[:4], ["--pre", "-i", "http://proxy/", "--no-binary"])
         self.assertEqual(args[4], ":all:")
         self.assertEqual(args[5], "-r")
-        self.assertEqual(args[-1], self.project)
+        self.assertEqual(args[-3], self.project)
+        self.assertEqual(args[-2], "--build-constraint")
+        self.assertEqual(self.read(args[-1]), "idna==3.10\n")
+
+    def test_build_constraints(self):
+        # Hashed pins constrain the build environments; an unhashed pin and
+        # a name pinned to two versions do not.
+        self.write(
+            "requirements.txt",
+            "Setuptools==80.9.0 --hash=sha256:aa\n"
+            'wheel==0.45.1 ; python_version >= "3" --hash=sha256:bb\n'
+            'wheel==0.44.0 ; python_version < "3" --hash=sha256:cc\n'
+            "six==1.17.0\n",
+        )
+        rewriter = pip_inputs.Rewriter(self.project, os.path.join(self.tmp.name, "b"), "lock", index=lambda url: url)
+        args = rewriter.args(["-r", "requirements.txt"])
+        self.assertEqual(args[-2], "--build-constraint")
+        self.assertEqual(self.read(args[-1]), "setuptools==80.9.0\n")
+
+    def test_no_build_constraints_without_pins(self):
+        self.write("requirements.txt", "six\n")
+        rewriter = pip_inputs.Rewriter(self.project, os.path.join(self.tmp.name, "n"), "lock", index=lambda url: url)
+        self.assertNotIn("--build-constraint", rewriter.args(["-r", "requirements.txt"]))
 
     def test_requirements_from_url_is_refused(self):
         self.write("requirements.txt", "-r https://example.org/requirements.txt\n")
@@ -174,6 +196,7 @@ class RewriterTest(unittest.TestCase):
         self.assertNotIn("url", data["packages"][0]["wheels"][0])
         self.assertEqual(data["packages"][1]["directory"], {"path": "/nix/store/thing/py", "editable": False})
         self.assertEqual([s["kind"] for s in rewriter.specs], ["file", "vcs"])
+        self.assertEqual(self.read(rewriter.build_constraints()), "six==1.17.0\n")
 
     def test_script_offline(self):
         self.write("app.py", '# /// script\n# dependencies = ["six @ https://example.org/six.tar.gz"]\n# ///\nprint(1)\n')

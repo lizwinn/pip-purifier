@@ -108,9 +108,7 @@ in
 
   # A lockfile for another system or another Python.
   other-system-or-python = check "other-system-or-python" [
-    (fails "other-system"
-      (withLock (rehashed (lock // { systems = [ "riscv64-linux" ]; }))).environment
-    )
+    (fails "other-system" (withLock (rehashed (lock // { pins.riscv64-linux = [ ]; }))).environment)
     (fails "other-python"
       (buildPipProject {
         inherit src;

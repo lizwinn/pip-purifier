@@ -215,6 +215,9 @@ class Rewriter:
         self.specs = []
         self.dirs = []
         self.written = {}
+        # The versions that a hashed requirement or a pylock.toml pins, by
+        # normalized name, which constrain the build environments too.
+        self.pinned = {}
 
     # Paths.
 
@@ -352,8 +355,32 @@ class Rewriter:
         # --hash. The specifier ends where the first option starts.
         m = re.match(r"^(.*?)(\s+--?[A-Za-z].*)?$", line)
         spec, options = m.group(1), m.group(2) or ""
+        if "--hash" in options:
+            pinned = re.match(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*==\s*([^\s;,]+)", spec)
+            if pinned:
+                self.pin(pinned.group(1), pinned.group(2))
         rewritten, _ = self.spec(spec)
         return rewritten + options
+
+    def pin(self, name, version):
+        """Records a pinned version. A name pinned to two versions, such as
+        under two environment markers, constrains nothing."""
+        key = re.sub(r"[-_.]+", "-", name).lower()
+        self.pinned[key] = version if self.pinned.get(key, version) == version else None
+
+    def build_constraints(self):
+        """Writes the pinned versions as a constraints file for pip's
+        `--build-constraint`, and returns its path, or None when nothing is
+        pinned. A build environment then installs the version that the
+        project pins, rather than resolving one of its own."""
+        pins = sorted(f"{name}=={version}" for name, version in self.pinned.items() if version is not None)
+        if not pins:
+            return None
+        path = os.path.join(self.out, "_build-constraints.txt")
+        os.makedirs(self.out, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(pins) + "\n")
+        return path
 
     def pylock(self, path):
         """Rewrites a pylock.toml. In offline mode every wheel, sdist and
@@ -367,6 +394,8 @@ class Rewriter:
         base = os.path.dirname(path)
         for package in data.get("packages", []):
             name = package.get("name")
+            if name and "version" in package:
+                self.pin(name, package["version"])
             for wheel in package.get("wheels", []) + ([package["sdist"]] if "sdist" in package else []):
                 if "url" in wheel:
                     self.specs.append({"kind": "file", "url": wheel["url"], "name": name, "hashes": wheel.get("hashes", {})})
@@ -467,4 +496,7 @@ class Rewriter:
             else:
                 out.append(self.spec(arg)[0])
             i += 1
+        constraints = self.build_constraints()
+        if constraints:
+            out += ["--build-constraint", constraints]
         return out
