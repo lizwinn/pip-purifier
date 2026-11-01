@@ -540,7 +540,8 @@ def upstream_indexes(project):
 
 
 def lock_environment(tmp, proxy, index, extra, links):
-    env = {k: v for k, v in os.environ.items() if not k.startswith("PIP_")}
+    # PYTHONPATH from the caller would come ahead of what pip resolves.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PIP_") and k != "PYTHONPATH"}
     no_proxy = ",".join(filter(None, [env.get("no_proxy", ""), "127.0.0.1", "localhost"]))
     env.update(
         HOME=os.path.join(tmp, "home"),

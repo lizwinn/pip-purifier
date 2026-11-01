@@ -202,14 +202,14 @@ These are refused:
   credentials. A private index needs a `fetchers.fetchurl` that supplies
   them, such as nixpkgs' `fetchurl` with `netrcPhase`.
 
-## Real-world projects
+## Examples
 
-- [pallets/click](https://github.com/pallets/click) 8.1.8, commit
-  `934813e`, with `-r requirements/tests.txt -e .`. The lock run takes
-  about 8 seconds, and a relock reproduces the lockfile byte for byte. The
-  test suite passes in the Nix sandbox and in the offline `.venv`, and
-  pyright resolves the imports from that `.venv`. `tests/real-world.sh`
-  runs this in CI on both systems.
+CI locks and builds [pallets/click](https://github.com/pallets/click)
+8.1.8 at commit `934813e`, with `-r requirements/tests.txt -e .`, on both
+systems (`tests/real-world.sh`). The lock run takes about 8 seconds, and a
+relock reproduces the lockfile byte for byte. The test suite passes in the
+Nix sandbox and in the offline `.venv`, and pyright resolves the imports
+from that `.venv`.
 
 ## Credits
 

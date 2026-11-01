@@ -159,7 +159,15 @@ in
     }:
     let
       exists = lockData != null || builtins.pathExists lockFile;
-      lock = if lockData != null then lockData else builtins.fromJSON (builtins.readFile lockFile);
+      # Nix cannot catch a JSON parse error, so a lockfile that is not JSON
+      # fails evaluation here, with this context naming the fix.
+      lock =
+        if lockData != null then
+          lockData
+        else
+          builtins.addErrorContext "while reading ${toString lockFile}, which is not a valid lockfile. Run `pip-purifier lock`." (
+            builtins.fromJSON (builtins.readFile lockFile)
+          );
 
       # A path the lockfile names relative to `src`, which may lead into
       # one of the `pathSources`.

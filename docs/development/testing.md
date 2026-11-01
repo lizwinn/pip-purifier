@@ -9,7 +9,9 @@
   (`tests/conformance.nix`), `conformance-offline` (`pip-purifier prefetch`
   against prebuilt inputs, then the everyday loop), `conformance-external`
   (a fixture built from a lockfile outside its source), and
-  `conformance-rebuild` (the sdist and wheel that CI builds twice).
+  `conformance-rebuild` (the sdist and wheel that CI builds twice). The
+  `pythonpath` check adds a nixpkgs Python package as a native build input
+  and checks that PYTHONPATH is clear once the builds have run pip.
 - `nix flake check --all-systems --no-build` evaluates the checks for
   x86_64-linux and aarch64-linux.
 - `tests/lock-run.sh`, the CI job `conformance-relock`, runs the lock

@@ -55,7 +55,8 @@ def environment(inputs):
     """The environment variables of an offline pip run."""
     env = dict(os.environ)
     for key in list(env):
-        if key.startswith("PIP_"):
+        # PYTHONPATH from the caller would come ahead of the locked packages.
+        if key.startswith("PIP_") or key == "PYTHONPATH":
             del env[key]
     env.update(
         PIP_NO_INDEX="1",

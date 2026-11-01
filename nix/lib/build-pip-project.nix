@@ -214,6 +214,10 @@ let
     chmod -R u+w $TMPDIR/work
     cd $work
     export HOME=$TMPDIR
+    # nixpkgs' Python setup hook puts the site-packages of each Python
+    # package among the build inputs on PYTHONPATH, which would come ahead
+    # of the locked packages in pip and in `python -m build`.
+    unset PYTHONPATH
   '';
 
   offlineEnv = {

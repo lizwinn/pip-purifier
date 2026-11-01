@@ -226,6 +226,33 @@ in
     ) "pip-purifier: fetches gives PyYAML the systems ${builtins.toJSON pyyaml}";
     runCommand "pip-purifier-test-fetches" { } "touch $out";
 
+  # A project that adds a nixpkgs Python package as a native build input:
+  # nixpkgs' Python setup hook puts it, and the Python environment of pip,
+  # on PYTHONPATH, ahead of the locked packages. The environment build and
+  # the sdist and wheel build clear PYTHONPATH before they run pip and
+  # `python -m build`; a postBuild hook checks it in the same shell.
+  pythonpath =
+    let
+      withSetuptools = build {
+        src = ./fixtures/project;
+        nativeBuildInputs = [ pkgs.python3Packages.setuptools ];
+      };
+      checked =
+        drv:
+        drv.overrideAttrs (old: {
+          postBuild = (old.postBuild or "") + ''
+            if [ -n "''${PYTHONPATH:-}" ]; then
+              echo "PYTHONPATH reached pip: $PYTHONPATH" >&2
+              exit 1
+            fi
+          '';
+        });
+    in
+    pkgs.linkFarmFromDrvs "pip-purifier-test-pythonpath" [
+      (checked withSetuptools.environment)
+      (checked withSetuptools.packages.greet)
+    ];
+
   conformance-offline =
     offline ./fixtures/project project.inputs "greet" "hello attrs=25.3.0 docopt=0.6.2 yaml=6.0.3"
       "sed -i 's/hello/howdy/' src/greet/__init__.py"
