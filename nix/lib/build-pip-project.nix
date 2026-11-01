@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: MIT
 #
-# buildPipProject (lib.pip-purifier.buildPipProject): builds a pip project
-# in the Nix sandbox from pip-purifier.lock.json, which `pip-purifier lock`
-# writes. The lockfile names every download and every output, so Nix knows
-# the outputs when it evaluates, with no generated Nix files and no import
-# from derivation.
+# buildPipProject: builds a pip project in the Nix sandbox from
+# pip-purifier.lock.json, which `pip-purifier lock` writes. The lockfile
+# names every download and every output, so Nix knows the outputs when it
+# evaluates, with no generated Nix files and no import from derivation.
 #
-#   (buildPipProject { inherit pkgs; src = ./.; }).packages.<name>
+# The file is a package for callPackage: the first argument set is what it
+# takes from the package set, and the result is the builder. The
+# pip-purifier overlay (`overlays.default`) adds it to the package set as
+# `buildPipProject`, so a package written for callPackage takes it like any
+# other dependency, and `buildPipProject.override` replaces what it takes
+# from the set. The builder returns
+#
+#   (buildPipProject { src = ./.; }).packages.<name>
 #     the sdist and the wheel of each local project, with the file names
 #     as `.sdist` and `.wheel` and every file under `.files`;
 #   .tests
@@ -28,13 +34,24 @@
 #     and `pip-purifier pip` read.
 {
   lib,
-  # The library the nix-purifiers share (github:nix-purifiers/purifier).
+  stdenv,
+  git,
+  mitm-cache,
+  openssl,
+  runCommand,
+  writeText,
+  symlinkJoin,
+  python3,
+  # The package set, which the purifier library fetches with: its
+  # fetchers, and the tools that unpack archives and rebuild .git.
+  pkgs,
+  # The library the nix-purifiers share (github:nix-purifiers/purifier),
+  # which the overlay passes.
   purifier,
-  # lib.pip-purifier.readLock (read-lock.nix).
+  # lib.pip-purifier.readLock (read-lock.nix), which the overlay passes.
   readLock,
 }:
 {
-  pkgs,
   # The directory pip runs in.
   src,
   # Replacements for nixpkgs' fetchers, such as a fetchurl that sends
@@ -48,7 +65,7 @@
   lockData ? null,
   # The Python to install for. Its version must be the one the lock run
   # used.
-  python ? pkgs.python3,
+  python ? python3,
   # Local projects outside `src` that the requirements name by a relative
   # path such as "../shared", each with its source.
   pathSources ? { },
@@ -70,14 +87,6 @@ let
     concatMapStrings
     escapeShellArg
     hasSuffix
-    ;
-  inherit (pkgs)
-    stdenv
-    git
-    mitm-cache
-    openssl
-    runCommand
-    writeText
     ;
 
   system = stdenv.hostPlatform.system;
@@ -315,7 +324,7 @@ let
     if packages == { } then
       throw "pip-purifier: the project has no local package to release; `release` holds the sdists and wheels of the local projects that pip installs."
     else
-      pkgs.symlinkJoin {
+      symlinkJoin {
         name = "${name}-release";
         paths = lib.attrValues packages;
       };

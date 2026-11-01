@@ -5,15 +5,13 @@ runs `pip install` once, through a recording package index on localhost,
 and writes `pip-purifier.lock.json`. The lockfile records every file pip
 downloaded, including what the isolated build environments of sdists
 downloaded, and every output the project makes. Nix then builds the project
-offline from it. You commit the lockfile, and no generated Nix files.
+offline from it. You commit the lockfile, and Nix reads it directly.
 
-pip has no lockfile that records downloads for every system, so
-pip-purifier writes its own. Where a project has a `pylock.toml` or a
-requirements file with `--hash` pins, those versions are the versions that
-pip-purifier locks, and they also constrain the environments in which pip
-builds sdists, through pip's `--build-constraint`. The files that a
-`pylock.toml` names, with their URLs and hashes, are read from it and not
-repeated in `pip-purifier.lock.json`.
+Where a project has a `pylock.toml` or a requirements file with `--hash`
+pins, pip-purifier locks those versions. They also constrain the
+environments in which pip builds sdists, through pip's
+`--build-constraint`. The Nix build reads the files that a `pylock.toml`
+names, with their URLs and hashes, from the `pylock.toml` itself.
 
 pip-purifier is part of [nix-purifiers](https://nix-purifiers.github.io),
 and meets the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
@@ -34,7 +32,8 @@ project has first. To lock other arguments, give them after `--`:
 nix run github:nix-purifiers/pip-purifier -- lock -- -r requirements/dev.txt -e .
 ```
 
-Then build the project with the flake library:
+The flake's `overlays.default` adds `buildPipProject` to a package set,
+where nixpkgs keeps its own builders. Build the project with it:
 
 ```nix
 {
@@ -43,10 +42,11 @@ Then build the project with the flake library:
 
   outputs = { nixpkgs, pip-purifier, ... }:
     let
-      project = pip-purifier.lib.pip-purifier.buildPipProject {
-        pkgs = nixpkgs.legacyPackages.x86_64-linux;
-        src = ./.;
+      pkgs = import nixpkgs {
+        system = "x86_64-linux";
+        overlays = [ pip-purifier.overlays.default ];
       };
+      project = pkgs.buildPipProject { src = ./.; };
     in
     {
       packages.x86_64-linux = {
@@ -59,7 +59,16 @@ Then build the project with the flake library:
 }
 ```
 
-`buildPipProject` takes `pkgs` and `src`, and gives:
+`buildPipProject` is a package for `callPackage`, so a package of your own
+takes it by name:
+
+```nix
+# package.nix
+{ buildPipProject }:
+(buildPipProject { src = ./.; }).packages.greet
+```
+
+`buildPipProject` gives:
 
 - `packages.<name>`, the sdist and wheel of each local project, with their
   file names as `.sdist` and `.wheel` and their paths under `.files`;
@@ -77,15 +86,21 @@ Then build the project with the flake library:
 
 The lockfile names every output, so Nix knows them at evaluation time.
 
-`buildPipProject` also takes `fetchers`, nixpkgs fetchers to use in place of
-the defaults, such as a `fetchurl` that sends credentials; `lockFile`, for a
-lockfile outside `src`; `python`, whose version has to be the one the lock
-was made with; `nativeBuildInputs` and `buildInputs`, for native
-dependencies of sdists; `pathSources`, for local projects outside `src`;
-and `checkPhase`. `lib.pip-purifier.readLock { src; }` reads the lockfile
-into the lock shape that every purifier gives.
+`buildPipProject` takes `src` and these optional arguments:
 
-## Everyday loop
+- `fetchers`, nixpkgs fetchers to use in place of the defaults, such as a
+  `fetchurl` that sends credentials;
+- `lockFile`, for a lockfile outside `src`;
+- `python`, whose version has to be the one the lock was made with;
+- `nativeBuildInputs` and `buildInputs`, for native dependencies of sdists;
+- `pathSources`, for local projects outside `src`;
+- `checkPhase`.
+
+`buildPipProject.override` replaces the packages it takes from the package
+set. `lib.pip-purifier.readLock { src; }` reads the lockfile into the lock
+shape that every purifier gives.
+
+## Development loop
 
 `pip-purifier prefetch` installs the project into `.venv` offline, with
 editable installs left editable. Then work in `.venv` as usual: an edit to
@@ -107,24 +122,24 @@ keeps the files of the existing lockfile: for each package that the
 lockfile has, including the build requirements of sdists, the lock run
 offers pip only those files. An unchanged project relocks to the same file
 byte for byte, and adding a requirement leaves the other versions alone.
-When a changed requirement needs a version that the lockfile does not have,
-the lock run says so and resolves afresh.
+When a changed requirement needs a version that the lockfile lacks, the
+lock run says so and resolves afresh.
 
 `pip-purifier update` resolves every package afresh, and
 `pip-purifier update <package>...` resolves only the named ones, with the
 `pip install` arguments that the lockfile records. A `pylock.toml` pins
-every version itself, so for such a project, run `pip lock` to update it,
-then `pip-purifier lock`.
+every version itself, so to update such a project, run `pip lock`, then
+`pip-purifier lock`.
 
-## Offline work
+## Working offline
 
-`prefetch` keeps everything the everyday loop needs alive with
+`prefetch` keeps everything the development loop needs alive with
 garbage-collector roots in `.pip-purifier/`, beside the lockfile: the
 locked downloads for this system, and the `pip-purifier` command with its
 Python, pip, nixpkgs and purifier library. After a prefetch, `.venv`, the
 editor and `pip-purifier pip` work with the network cut off. Keep the
-command itself installed, for example in a dev shell, so that it does not
-need a download either.
+command itself installed, for example in a dev shell, so that running it
+needs no download either.
 
 A project can keep its build outside its tree, such as in a packaging flake
 for a project whose author does not use pip-purifier. Give the lockfile's
@@ -143,14 +158,14 @@ look for it by default. The packages in `.venv` hold their sources, so
 go-to-definition and type information work offline. The language server
 itself comes from your editor setup, such as nixpkgs' `pyright`.
 
-## Errors and fixes
+## Troubleshooting
 
 - **"does not match … any more. Run `pip-purifier lock`."** A requirements
   file, `pylock.toml`, script or `pyproject.toml` changed after the lock.
   Relock.
 - **"was changed after `pip-purifier lock` wrote it"**. The lockfile holds
   a hash of its own content, and an edit by hand changed the content.
-  Relock, and check the change in review.
+  Relock, and review the lockfile's diff before you commit it.
 - **"is not a pip-purifier lockfile"**, **"is not valid JSON"** or **"has
   lock format version …"**. The lockfile is damaged, or comes from another
   version of pip-purifier. Relock.
@@ -158,29 +173,32 @@ itself comes from your editor setup, such as nixpkgs' `pyright`.
   needs a package that the lock run did not see, for example after you
   added a requirement and ran `pip-purifier pip install` before relocking.
 - **"hash mismatch in fixed-output derivation"** from Nix. The server now
-  serves different bytes under a locked URL. Relock, and check the change
-  in review.
+  serves different bytes under a locked URL. Relock, and review the
+  lockfile's diff before you commit it.
 - **"was made for Python …"**. Pass `buildPipProject` the `python` of the
   version that the lock names, or relock with `--python`.
 - **"has no lock for <system>"**. The lock covers x86_64-linux and
   aarch64-linux. Relock with `--system` for another.
 
-## Sources supported and refused
+## Supported language repositories
 
-These inputs work:
+pip-purifier locks what pip installs from:
 
+- package indexes, from `PIP_INDEX_URL` and `PIP_EXTRA_INDEX_URL`, from
+  pip's configuration files, or from the index options of the
+  requirements, and find-links directories;
 - requirements files, with nested `-r` and `-c` files, `--hash` pins (as
-  pip-compile writes them), environment markers and index options;
+  pip-compile writes them) and environment markers;
 - `pylock.toml` files ([PEP 751](https://peps.python.org/pep-0751/)), as
   `pip lock` writes them;
 - the dependencies of a script ([PEP 723](https://peps.python.org/pep-0723/)),
   with `--requirements-from-script`;
 - local projects, editable or not, inside the project directory or beside
   it;
-- requirements from git, Mercurial, Subversion and Bazaar repositories, and
-  from URLs of wheels and sdists;
+- git, Mercurial, Subversion and Bazaar repositories, and URLs of wheels
+  and sdists;
 - a repository or URL that another package names as a source in its own
-  metadata. pip clones or downloads those itself, so the offline install
+  metadata. pip clones or downloads those itself, and the offline install
   answers it: git through `url.<local clone>.insteadOf`, Mercurial,
   Subversion and Bazaar through stand-in commands that copy the locked
   checkout, and URLs through `mitm-cache replay`, an HTTPS proxy that
@@ -188,19 +206,10 @@ These inputs work:
 - sdists, which pip builds with the build requirements that the lock run
   recorded.
 
-The index comes from `PIP_INDEX_URL` and `PIP_EXTRA_INDEX_URL`, from pip's
-configuration files, or from the index options of the requirements.
-
-These are refused:
-
-- **Other systems.** A lock covers x86_64-linux and aarch64-linux. macOS
-  and Windows wheels are not locked.
-- **Another Python version.** The wheels of a lock are those of the Python
-  version that the lock run used, and a build with another version is
-  refused.
-- **Credentials in the lockfile.** The lockfile records URLs without their
-  credentials. A private index needs a `fetchers.fetchurl` that supplies
-  them, such as nixpkgs' `fetchurl` with `netrcPhase`.
+A lock covers x86_64-linux and aarch64-linux, with the wheels of the Python
+version that the lock run used. The lockfile records URLs without their
+credentials, so a private index needs a `fetchers.fetchurl` that supplies
+them, such as nixpkgs' `fetchurl` with `netrcPhase`.
 
 ## Examples
 
@@ -224,8 +233,11 @@ the sandbox:
 
   outputs = { nixpkgs, pip-purifier, ... }:
     let
-      project = pip-purifier.lib.pip-purifier.buildPipProject {
-        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      pkgs = import nixpkgs {
+        system = "x86_64-linux";
+        overlays = [ pip-purifier.overlays.default ];
+      };
+      project = pkgs.buildPipProject {
         src = ./.;
         checkPhase = "pytest tests";
       };

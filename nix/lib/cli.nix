@@ -49,8 +49,7 @@ let
   purifier = import ../purifier/nix/lib { inherit lib; };
 
   inherit (import ./read-lock.nix { inherit lib; }) readLock;
-  project = import ./build-pip-project.nix { inherit lib purifier readLock; } {
-    inherit pkgs;
+  project = pkgs.callPackage ./build-pip-project.nix { inherit purifier readLock; } {
     src = source root;
     lockFile = lockPath;
     lockData = lock;

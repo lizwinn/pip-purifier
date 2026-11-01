@@ -7,7 +7,7 @@
   contract that the sandbox can run: `conformance-stale`,
   `conformance-tampered`, `conformance-missing` and `conformance-malformed`
   (`tests/conformance.nix`), `conformance-offline` (`pip-purifier prefetch`
-  against prebuilt inputs, then the everyday loop), `conformance-external`
+  against prebuilt inputs, then the development loop), `conformance-external`
   (a fixture built from a lockfile outside its source), and
   `conformance-rebuild` (the sdist and wheel that CI builds twice). The
   `pythonpath` check adds a nixpkgs Python package as a native build input
@@ -21,7 +21,7 @@
 - `tests/offline.sh`, the CI job `conformance-offline`, runs `prefetch`,
   with the lockfile inside and outside the project, and
   `publish --dry-run`. In CI it then collects garbage. With the network cut,
-  it runs the everyday loop and `pip-purifier pip`, which has to name
+  it runs the development loop and `pip-purifier pip`, which has to name
   `pip-purifier lock` for a package the lockfile lacks.
 - `tests/update.sh`, the CI job `conformance-update`, updates a pinned
   package and checks that `prefetch` accepts the new lockfile.

@@ -703,8 +703,8 @@ def lock(ns):
         artifacts = {}
         sources = {}
         by_name = {normalize(i["metadata"]["name"]): i for i in items}
-        # The files of a pylock.toml, which the lockfile does not repeat:
-        # readLock (nix/lib/read-lock.nix) reads them from the pylock.toml.
+        # The files of a pylock.toml, which readLock (nix/lib/read-lock.nix)
+        # reads from the pylock.toml itself; `artifacts` holds the others.
         in_pylock = set()
         for spec in rewriter.specs:
             url = spec["url"]
@@ -914,7 +914,7 @@ def inputs_of(project, lockfile):
 
 
 def prefetch_command(ns):
-    """Realizes what the everyday loop and the editor need, and installs
+    """Realizes what the development loop and the editor need, and installs
     the project into a virtual environment offline: the locked downloads
     for this system, and this command with its Python, pip, nixpkgs and
     purifier library, each kept alive by a root under .pip-purifier/."""

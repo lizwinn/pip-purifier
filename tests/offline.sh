@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 #
-# The everyday loop of the project fixture with no network, after
+# The development loop of the project fixture with no network, after
 # `pip-purifier prefetch`. Online, it runs `prefetch` with the lockfile in
 # the project and with one kept outside it (--lockfile), and
 # `publish --dry-run`. With PIP_PURIFIER_TEST_GC=1, as in CI, it then
@@ -51,7 +51,7 @@ cut() {
   fi
 }
 
-echo "== the everyday loop with no network" >&2
+echo "== the development loop with no network" >&2
 cut bash -s "$cli" <<'EOF'
 set -euo pipefail
 cli=$1
@@ -70,4 +70,4 @@ fi
 grep -q 'the lockfile has no file for rich' missing.txt
 grep -q 'run `pip-purifier lock`' missing.txt
 EOF
-echo "the everyday loop worked offline" >&2
+echo "the development loop worked offline" >&2

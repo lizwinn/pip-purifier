@@ -4,16 +4,16 @@
 # access is the fixed-output fetches of locked downloads.
 {
   pkgs,
-  # lib.pip-purifier.buildPipProject of this flake.
-  buildPipProject,
+  # The flake's default package overlay, which adds buildPipProject.
+  overlay,
   cli,
 }:
 let
   inherit (pkgs) lib runCommand;
 
-  # Every fixture builds the way a consumer's package does: through the
-  # builder of this flake's library, with a package set.
-  build = args: buildPipProject ({ inherit pkgs; } // args);
+  # Every fixture builds the way a consumer's package does: through
+  # buildPipProject of a package set that the overlay applies to.
+  build = (pkgs.extend overlay).buildPipProject;
 
   # A local setuptools project installed with `-e .`, with a console
   # script, a wheel, an sdist-only dependency (docopt, built with the locked
@@ -155,7 +155,7 @@ let
       touch $out
     '';
 
-  # The everyday loop with no network, which the sandbox has none of: runs
+  # The development loop with no network, which the sandbox has none of: runs
   # `pip-purifier prefetch` in a copy of a fixture, with the inputs Nix
   # built for it in place of its own nix-build, then runs a program of the
   # .venv. `edit` changes the source afterwards: an editable install prints

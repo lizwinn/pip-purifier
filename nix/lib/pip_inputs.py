@@ -372,7 +372,7 @@ class Rewriter:
         """Writes the pinned versions as a constraints file for pip's
         `--build-constraint`, and returns its path, or None when nothing is
         pinned. A build environment then installs the version that the
-        project pins, rather than resolving one of its own."""
+        project pins."""
         pins = sorted(f"{name}=={version}" for name, version in self.pinned.items() if version is not None)
         if not pins:
             return None

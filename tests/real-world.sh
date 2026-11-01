@@ -9,7 +9,7 @@
 #      click's test suite as the checkPhase;
 #   2. a relock reproduces the lockfile byte for byte, and how long a lock
 #      takes;
-#   3. the everyday loop offline: prefetch into .venv, run the tests, check
+#   3. the development loop offline: prefetch into .venv, run the tests, check
 #      that pyright resolves every import from that .venv;
 #   4. adding a requirement: prefetch refuses the stale lock with a message
 #      that says to relock, and works after the relock.
@@ -49,8 +49,11 @@ cat > flake.nix <<EOF
   outputs = { nixpkgs, pip-purifier, ... }:
     let
       system = builtins.currentSystem or "x86_64-linux";
-      project = pip-purifier.lib.pip-purifier.buildPipProject {
-        pkgs = nixpkgs.legacyPackages.\${system};
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ pip-purifier.overlays.default ];
+      };
+      project = pkgs.buildPipProject {
         src = ./.;
         checkPhase = "pytest tests";
       };
@@ -65,7 +68,7 @@ sed -i "s/builtins.currentSystem or \"x86_64-linux\"/\"$system\"/" flake.nix
 nix build --no-link -L "path:.#checks.$system.tests"
 nix build --no-link "path:.#packages.$system.default"
 
-echo "== the everyday loop offline" >&2
+echo "== the development loop offline" >&2
 "$cli" prefetch
 .venv/bin/pytest -q tests
 nix run 'nixpkgs#pyright' -- --pythonpath .venv/bin/python --outputjson src/click > "$work/pyright.json" || true

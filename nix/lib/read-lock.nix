@@ -84,8 +84,8 @@ let
 
   # The wheels, sdists and archives that a pylock.toml names by URL, as
   # file entries, at the path that the offline install looks them up by:
-  # the last segment of the URL, without its query or fragment. The lock
-  # run does not repeat them in `artifacts`.
+  # the last segment of the URL, without its query or fragment. `artifacts`
+  # holds the other downloads.
   pylockEntries =
     path:
     let
