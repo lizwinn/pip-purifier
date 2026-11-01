@@ -3,11 +3,15 @@
 arguments, URL handling, and the checks of a lockfile."""
 
 import contextlib
+import hashlib
+import http.server
 import io
 import json
 import os
 import tempfile
+import threading
 import unittest
+import urllib.request
 
 import pip_purifier as pp
 
@@ -56,6 +60,34 @@ class Urls(unittest.TestCase):
 
     def test_sri(self):
         self.assertEqual(pp.sri(bytes(32)), "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+
+
+class ProxyRecords(unittest.TestCase):
+    def test_file_is_recorded_before_pip_gets_it(self):
+        # pip, and then the lock run, go on once the last byte arrives, so
+        # the proxy has to record a file before it sends any of it.
+        body = b"wheel bytes"
+
+        class Upstream(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        self.addCleanup(upstream.server_close)
+        self.addCleanup(upstream.shutdown)
+        url = f"http://127.0.0.1:{upstream.server_address[1]}/six-1.0-py3-none-any.whl"
+        with pp.Proxy() as proxy:
+            with urllib.request.urlopen(proxy.file_link(url)) as response:
+                self.assertIn("six-1.0-py3-none-any.whl", proxy.files)
+                self.assertEqual(response.read(), body)
+        self.assertEqual(proxy.files["six-1.0-py3-none-any.whl"]["hash"], pp.sri(hashlib.sha256(body).digest()))
 
 
 class Lockfiles(unittest.TestCase):

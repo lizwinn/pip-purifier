@@ -261,22 +261,27 @@ class Proxy:
 
     def file(self, request, url):
         # The whole file arrives first, so a failed transfer is retried
-        # before pip sees any of it.
+        # before pip sees any of it. The file is recorded before pip gets
+        # it: pip, and then the lock run, can go on as soon as the last
+        # byte arrives, while this server thread is still finishing.
         with tempfile.TemporaryFile() as data:
             try:
                 download(url, data)
             except urllib.error.HTTPError as error:
                 request.send_error(error.code)
                 return
+            size = data.tell()
             digest = hashlib.sha256()
-            request.send_response(200)
-            request.send_header("Content-Length", str(data.tell()))
-            request.end_headers()
             data.seek(0)
             while chunk := data.read(1 << 16):
                 digest.update(chunk)
+            self.record(url, digest.digest())
+            request.send_response(200)
+            request.send_header("Content-Length", str(size))
+            request.end_headers()
+            data.seek(0)
+            while chunk := data.read(1 << 16):
                 request.wfile.write(chunk)
-        self.record(url, digest.digest())
 
     def record(self, url, digest):
         name = file_name(url)
