@@ -29,7 +29,9 @@
   python3,
   runCommand,
   writeText,
-  callPackage,
+  pkgs,
+  # The library the nix-purifiers share (github:nix-purifiers/purifier).
+  purifier,
 }:
 {
   # The directory pip runs in, which holds the lockfile.
@@ -41,8 +43,8 @@
   # The Python to install for. Its version must be the one the lock run
   # used.
   python ? python3,
-  # The fetchers of locked downloads (nix/lib/fetch.nix); `fetchurl`
-  # replaces the file fetcher, for credentials or mirrors.
+  # A replacement for nixpkgs' fetchurl, for credentials or mirrors, which
+  # the purifier library fetches locked files with.
   fetchurl ? null,
   # Local projects outside `src` that the requirements name by a relative
   # path such as "../shared", each with its source.
@@ -78,8 +80,12 @@ let
   system = stdenv.hostPlatform.system;
   arch = stdenv.hostPlatform.parsed.cpu.name;
 
-  fetch = callPackage ./fetch.nix (lib.optionalAttrs (fetchurl != null) { inherit fetchurl; });
-  compatible = import ./wheels.nix {
+  fetchers = {
+    inherit pkgs;
+  }
+  // lib.optionalAttrs (fetchurl != null) { inherit fetchurl; };
+  fetch = purifier.fetchEntry fetchers;
+  compatible = purifier.wheels {
     pythonVersion = lock.python;
     inherit arch;
     glibcVersion = lib.versions.majorMinor (lib.getVersion stdenv.cc.libc);
@@ -170,30 +176,28 @@ let
     "${builtins.elemAt m 0}/${builtins.elemAt m 1}";
 
   # Each git repository that another package names as a source, with a
-  # clone of it in the store.
-  repositories = map (
-    repository:
-    let
-      entry = byPath.${repository.path};
-    in
-    repository
+  # clone of it in the store: the purifier library rebuilds its .git from
+  # the recorded commit object.
+  repositories = map (repository: repository // { path = "${fetch byPath.${repository.path}}"; }) (
+    checked.repositories or [ ]
+  );
+
+  # The wheels that install here and every sdist and archive, by file name.
+  wheelhouse = purifier.tree (
+    fetchers
     // {
-      path = "${fetch entry}";
-      inherit (entry.git) rev;
-      commitObject = entry.git.commitObject.object;
-      inherit (entry.git.commitObject) gitlinks;
+      name = "pip-purifier-wheelhouse";
+      entries = files;
     }
-  ) (checked.repositories or [ ]);
+  );
 
   # Each Mercurial, Subversion or Bazaar repository that another package
   # names as a source, with its locked checkout, for vcs_shim.py.
   shims = map (shim: shim // { path = "${fetch byPath.${shim.path}}"; }) (checked.shims or [ ]);
 
   inputs = runCommand "pip-purifier-inputs" { } ''
-    mkdir -p $out/wheelhouse
-    ${concatMapStrings (
-      entry: "ln -s ${fetch entry} $out/wheelhouse/${escapeShellArg (fileName entry)}\n"
-    ) files}
+    mkdir -p $out
+    ln -s ${wheelhouse} $out/wheelhouse
     mkdir -p $out/replay
     ${concatMapStrings (replay: ''
       mkdir -p "$(dirname $out/replay/${escapeShellArg (replayPath replay.url)})"

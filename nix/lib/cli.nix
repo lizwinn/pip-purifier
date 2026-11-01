@@ -42,7 +42,13 @@ let
   );
   pathSources = lib.genAttrs outside (rel: source (/. + "${src}/${rel}"));
 
-  project = pkgs.callPackage ./build-pip-project.nix { } {
+  # The purifier library at the revision this pip-purifier's flake.lock
+  # pins, which the CLI package installs beside this file.
+  flakeLock = builtins.fromJSON (builtins.readFile ./flake.lock);
+  purifierNode = flakeLock.nodes.${flakeLock.nodes.root.inputs.purifier};
+  purifier = import (builtins.fetchTree purifierNode.locked + "/nix/lib") { inherit lib; };
+
+  project = pkgs.callPackage ./build-pip-project.nix { inherit purifier; } {
     src = source root;
     inherit pathSources;
   };

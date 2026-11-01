@@ -231,30 +231,6 @@ in
         touch $out
       '';
 
-  # Which locked wheels the Nix build keeps for a system (nix/lib/wheels.nix).
-  wheels =
-    let
-      x86 = import ../nix/lib/wheels.nix {
-        pythonVersion = "3.14";
-        arch = "x86_64";
-        glibcVersion = "2.40";
-      };
-      cases = {
-        "pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" = true;
-        "pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl" = false;
-        "pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.whl" = false;
-        "six-1.17.0-py2.py3-none-any.whl" = true;
-        "cryptography-46.0.0-cp311-abi3-manylinux_2_34_x86_64.whl" = true;
-        "x-1.0-cp314-cp314-manylinux_2_41_x86_64.whl" = false;
-        "x-1.0-cp314-cp314-musllinux_1_2_x86_64.whl" = false;
-      };
-      wrong = lib.filterAttrs (name: expected: x86 name != expected) cases;
-    in
-    assert lib.assertMsg (
-      wrong == { }
-    ) "wheels.nix chose wrongly for ${toString (builtins.attrNames wrong)}";
-    runCommand "pip-purifier-test-wheels" { } "touch $out";
-
   inherit (import ./negative.nix { inherit pkgs buildPipProject; })
     evaluation
     missing-entry

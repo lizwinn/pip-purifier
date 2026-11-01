@@ -101,6 +101,12 @@ def download(url, out, accept=None, attempts=4):
         try:
             with open_url(url, accept=accept) as response:
                 shutil.copyfileobj(response, out)
+                # A transfer can end early without an error; the length the
+                # server announced catches it.
+                expected = response.headers.get("Content-Length")
+                encoded = response.headers.get("Content-Encoding", "identity") != "identity"
+                if expected is not None and not encoded and out.tell() != int(expected):
+                    raise http.client.IncompleteRead(b"", int(expected) - out.tell())
                 return response.geturl()
         except urllib.error.HTTPError:
             raise
@@ -360,8 +366,8 @@ def prefetch(vcs, url, rev, submodules):
     flag = "true" if submodules else "false"
     expr = {
         "git": f"pkgs.fetchgit {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; fetchSubmodules = {flag}; hash = pkgs.lib.fakeHash; }}",
-        "hg": f'pkgs.fetchhg {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; hash = pkgs.lib.fakeHash; }}',
-        "svn": f'pkgs.fetchsvn {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; hash = pkgs.lib.fakeHash; }}',
+        "hg": f"pkgs.fetchhg {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; fetchSubrepos = true; hash = pkgs.lib.fakeHash; }}",
+        "svn": f"pkgs.fetchsvn {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; ignoreExternals = false; ignoreKeywords = false; hash = pkgs.lib.fakeHash; }}",
         "bzr": f'pkgs.fetchbzr {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; hash = pkgs.lib.fakeHash; }}',
     }[vcs]
     result = subprocess.run(
@@ -442,8 +448,14 @@ def checkout_artifact(vcs, url, rev, submodules):
     checkout."""
     path = f"vcs/{re.sub(r'[^A-Za-z0-9._-]+', '-', url.rstrip('/').split('/')[-1])}-{rev[:12]}"
     fields = {"url": url, "rev": rev}
+    # The checkout pip makes: git and Mercurial with their submodules and
+    # subrepositories, Subversion with its externals and expanded keywords.
     if vcs == "git":
         fields.update(submodules=submodules, leaveDotGit=False, commitObject=None)
+    elif vcs == "hg":
+        fields.update(subrepos=True)
+    elif vcs == "svn":
+        fields.update(ignoreExternals=False, ignoreKeywords=False)
     return {"path": path, vcs: fields, "hash": prefetch(vcs, url, rev, submodules)}
 
 

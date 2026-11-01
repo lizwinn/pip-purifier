@@ -1,12 +1,9 @@
 # SPDX-License-Identifier: MIT
-"""Unit tests of nix/lib/offline.py and nix/lib/vcs_shim.py: rebuilding a
-shallow .git from a plain checkout and a recorded commit object (with a
-submodule), and the answers of the hg, svn and bzr shims."""
+"""Unit tests of nix/lib/offline.py and nix/lib/vcs_shim.py: tagging a copy
+with its locked version, and the answers of the hg, svn and bzr shims."""
 
-import base64
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,81 +12,18 @@ import unittest
 import offline
 
 SHIM = os.path.join(os.path.dirname(offline.__file__), "vcs_shim.py")
-ENV = dict(
-    os.environ,
-    GIT_AUTHOR_NAME="t",
-    GIT_AUTHOR_EMAIL="t@t",
-    GIT_COMMITTER_NAME="t",
-    GIT_COMMITTER_EMAIL="t@t",
-    GIT_CONFIG_GLOBAL=os.devnull,
-)
 
 
-def git(cwd, *args):
-    return subprocess.run(["git", "-c", "protocol.file.allow=always", *args], cwd=cwd, env=ENV, capture_output=True, check=True).stdout.decode().strip()
-
-
-class RebuildGit(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = self.tmp.name
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def repo(self, name, files):
-        path = os.path.join(self.root, name)
-        os.makedirs(path)
-        git(path, "init", "-q", "-b", "main")
-        for rel, (text, mode) in files.items():
-            os.makedirs(os.path.dirname(os.path.join(path, rel)), exist_ok=True)
-            with open(os.path.join(path, rel), "w") as f:
-                f.write(text)
-            os.chmod(os.path.join(path, rel), mode)
-        git(path, "add", "-A")
-        git(path, "commit", "-q", "-m", name)
-        return path
-
-    def plain_copy(self, repo, name):
-        """The checkout without .git, as fetchgit makes it."""
-        copy = os.path.join(self.root, name)
-        shutil.copytree(repo, copy, ignore=shutil.ignore_patterns(".git"), symlinks=True)
-        return copy
-
-    def test_rebuild(self):
-        repo = self.repo("plain", {"a.py": ("x = 1\n", 0o644), "bin/run": ("#!/bin/sh\n", 0o755)})
-        rev = git(repo, "rev-parse", "HEAD")
-        raw = subprocess.run(["git", "cat-file", "commit", rev], cwd=repo, capture_output=True, check=True).stdout
-        copy = self.plain_copy(repo, "copy")
-        offline.rebuild_git(copy, rev, base64.b64encode(raw).decode(), [])
-        self.assertEqual(git(copy, "rev-parse", "HEAD"), rev)
-        self.assertEqual(git(copy, "status", "--porcelain"), "")
-
-    def test_rebuild_with_submodule(self):
-        sub = self.repo("sub", {"s.txt": ("sub\n", 0o644)})
-        top = self.repo("top", {"t.txt": ("top\n", 0o644)})
-        git(top, "submodule", "add", "-q", sub, "vendored")
-        git(top, "commit", "-q", "-m", "add submodule")
-        rev = git(top, "rev-parse", "HEAD")
-        sub_rev = git(sub, "rev-parse", "HEAD")
-        raw = subprocess.run(["git", "cat-file", "commit", rev], cwd=top, capture_output=True, check=True).stdout
-        # fetchgit without submodules leaves the submodule directory empty.
-        copy = self.plain_copy(top, "copy")
-        shutil.rmtree(os.path.join(copy, "vendored"))
-        os.makedirs(os.path.join(copy, "vendored"))
-        offline.rebuild_git(copy, rev, base64.b64encode(raw).decode(), [{"path": "vendored", "rev": sub_rev}])
-        self.assertEqual(git(copy, "rev-parse", "HEAD"), rev)
-        self.assertIn(sub_rev, git(copy, "ls-tree", "HEAD", "vendored"))
-
-    def test_rebuild_refuses_other_files(self):
-        repo = self.repo("plain", {"a.py": ("x = 1\n", 0o644)})
-        rev = git(repo, "rev-parse", "HEAD")
-        raw = subprocess.run(["git", "cat-file", "commit", rev], cwd=repo, capture_output=True, check=True).stdout
-        copy = self.plain_copy(repo, "copy")
-        with open(os.path.join(copy, "a.py"), "w") as f:
-            f.write("x = 2\n")
-        with self.assertRaises(SystemExit):
-            offline.rebuild_git(copy, rev, base64.b64encode(raw).decode(), [])
+class Tag(unittest.TestCase):
+    def test_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "a.py"), "w") as f:
+                f.write("x = 1\n")
+            offline.tag(tmp, "1.2.3")
+            described = subprocess.run(["git", "describe", "--tags", "--exact-match"], cwd=tmp, capture_output=True, text=True, check=True)
+            self.assertEqual(described.stdout.strip(), "1.2.3")
+            status = subprocess.run(["git", "status", "--porcelain"], cwd=tmp, capture_output=True, text=True, check=True)
+            self.assertEqual(status.stdout, "")
 
 
 class Shims(unittest.TestCase):
@@ -120,6 +54,7 @@ class Shims(unittest.TestCase):
             env=dict(os.environ, PIP_PURIFIER_VCS_SHIMS=self.table),
             capture_output=True,
             text=True,
+            check=False,
         )
         if check:
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -130,6 +65,7 @@ class Shims(unittest.TestCase):
         self.shim("hg", "clone", "--noupdate", "-q", "https://hg.example/r", dest)
         self.shim("hg", "update", "-q", "--rev=" + "a" * 40, cwd=dest)
         self.assertEqual(self.shim("hg", "parents", "--template={node}", cwd=dest).stdout, "a" * 40)
+        self.assertEqual(self.shim("hg", "parents", "--template={rev}", cwd=dest).stdout, "a" * 40)
         self.assertEqual(self.shim("hg", "showconfig", "paths.default", cwd=dest).stdout.strip(), "https://hg.example/r")
         self.assertTrue(os.path.exists(os.path.join(dest, "setup.py")))
 

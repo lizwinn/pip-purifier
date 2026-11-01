@@ -33,6 +33,7 @@ stdenvNoCC.mkDerivation {
     fileset = lib.fileset.unions [
       ../../src
       ../../nix/lib
+      ../../flake.lock
     ];
   };
 
@@ -43,6 +44,8 @@ stdenvNoCC.mkDerivation {
     mkdir -p $out/bin $out/share/pip-purifier
     cp src/pip_purifier.py $out/share/pip-purifier/
     cp -r nix/lib $out/share/pip-purifier/nix-lib
+    # cli.nix fetches the purifier library at the revision this lock pins.
+    cp flake.lock $out/share/pip-purifier/nix-lib/flake.lock
     makeWrapper ${python.interpreter} $out/bin/pip-purifier \
       --add-flags "-I $out/share/pip-purifier/pip_purifier.py" \
       --prefix PATH : ${
