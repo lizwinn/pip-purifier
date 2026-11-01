@@ -102,6 +102,11 @@ shape that every purifier gives.
 
 ## Development loop
 
+pip has no plugin mechanism, so `pip-purifier` is a command of its own
+that runs pip. The development loop is the project's `.venv`, and
+`pip-purifier pip` runs pip against the locked files in place of a pip
+inside `.venv`.
+
 `pip-purifier prefetch` installs the project into `.venv` offline, with
 editable installs left editable. Then work in `.venv` as usual: an edit to
 the project's source shows in the next run without a reinstall.
