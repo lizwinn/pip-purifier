@@ -82,8 +82,10 @@ let
     [tool.setuptools]
     py-modules = []
     EOF
-    echo '["./user"]' > $out/args.json
-    echo '{}' > $out/sources.json
+    # The user package, and a top-level Subversion requirement, which the
+    # rewriter points at its locked checkout.
+    echo '["./user", "shimtop @ svn+https://svn.example.invalid/shimtop@5"]' > $out/args.json
+    echo '{"svn+https://svn.example.invalid/shimtop@5": "${shimPackage "shimtop"}"}' > $out/sources.json
     echo '{}' > $out/versions.json
     echo '[]' > $out/repositories.json
     touch $out/pins.txt
@@ -123,6 +125,7 @@ let
             direct = json.loads(m.distribution(name).read_text("direct_url.json"))
             print(name, m.version(name), direct["vcs_info"])
             assert direct["vcs_info"]["commit_id"] == rev, direct
+        print("shimtop", m.version("shimtop"))
         EOF
         touch $out
       '';
@@ -207,6 +210,53 @@ in
   script = script.check;
 
   inherit shims;
+
+  # The unit tests of the lock tool, the input rewriter, the git rebuild and
+  # the VCS shims (tests/unit).
+  unit =
+    runCommand "pip-purifier-test-unit"
+      {
+        nativeBuildInputs = [
+          pkgs.python3
+          pkgs.git
+        ];
+      }
+      ''
+        export HOME=$TMPDIR
+        export PIP_PURIFIER_NIX_LIB=${../nix/lib}
+        export PIP_PURIFIER_PYTHON=${pkgs.python3.interpreter}
+        export PIP_PURIFIER_NIXPKGS=${pkgs.path}
+        export PYTHONPATH=${../nix/lib}:${../src}
+        python -m unittest discover -s ${./unit} -v
+        touch $out
+      '';
+
+  # Which locked wheels the Nix build keeps for a system (nix/lib/wheels.nix).
+  wheels =
+    let
+      x86 = import ../nix/lib/wheels.nix {
+        pythonVersion = "3.14";
+        arch = "x86_64";
+        glibcVersion = "2.40";
+      };
+      cases = {
+        "pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" = true;
+        "pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl" = false;
+        "pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.whl" = false;
+        "six-1.17.0-py2.py3-none-any.whl" = true;
+        "cryptography-46.0.0-cp311-abi3-manylinux_2_34_x86_64.whl" = true;
+        "x-1.0-cp314-cp314-manylinux_2_41_x86_64.whl" = false;
+        "x-1.0-cp314-cp314-musllinux_1_2_x86_64.whl" = false;
+      };
+      wrong = lib.filterAttrs (name: expected: x86 name != expected) cases;
+    in
+    assert lib.assertMsg (wrong == { }) "wheels.nix chose wrongly for ${toString (builtins.attrNames wrong)}";
+    runCommand "pip-purifier-test-wheels" { } "touch $out";
+
+  inherit (import ./negative.nix { inherit pkgs buildPipProject; })
+    evaluation
+    missing-entry
+    ;
 
   hashed = imports "hashed" hashed.environment "import idna; print(idna.__version__)" "3.10";
 

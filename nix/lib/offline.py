@@ -261,11 +261,40 @@ def install(pip, project, inputs, venv, editable, extra=()):
         replayer = serve_replays(inputs, tmp, env)
         print("pip-purifier: " + " ".join(command), file=sys.stderr)
         try:
-            subprocess.run(command, cwd=project, env=env, check=True)
+            run_pip(command, project, env)
         finally:
             if replayer:
                 replayer.terminate()
                 replayer.wait()
+
+
+def run_pip(command, cwd, env):
+    """Runs pip, passing its output through, and turns a requirement it
+    cannot find among the locked files into an error that names it and the
+    command that fixes it."""
+    process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    missing = []
+    # pip names a requirement it found no files for either directly, or,
+    # when constraints are involved, in an indented list after this line.
+    in_list = False
+    for line in process.stdout:
+        sys.stderr.write(line)
+        m = re.search(r"No matching distribution found for (\S+)", line)
+        if m:
+            missing.append(m.group(1))
+        if "have no matching distributions available" in line:
+            in_list = True
+        elif in_list and re.match(r"^\s+\S+\s*$", line):
+            missing.append(line.strip())
+        else:
+            in_list = False
+    if process.wait() != 0:
+        if missing:
+            raise SystemExit(
+                f"pip-purifier: the lockfile has no file for {', '.join(missing)}. The requirements need something the "
+                "lock run did not see; run `pip-purifier lock`."
+            )
+        raise SystemExit(f"pip-purifier: pip failed with exit status {process.returncode}")
 
 
 def main():

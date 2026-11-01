@@ -104,7 +104,24 @@ let
     rel: !(builtins.pathExists (resolve rel)) || hashFile "sha256" (resolve rel) != lock.inputs.${rel}
   ) (attrNames lock.inputs);
 
+  requiredFields = [
+    "version"
+    "python"
+    "args"
+    "inputs"
+    "systems"
+    "pins"
+    "versions"
+    "outputs"
+    "sources"
+    "artifacts"
+  ];
+  missingFields = filter (field: !(lock ? ${field})) requiredFields;
+
   checked =
+    assert
+      builtins.isAttrs lock && missingFields == [ ]
+      || throw "pip-purifier: ${toString lockFile} is not a pip-purifier lockfile: it lacks ${lib.concatStringsSep ", " missingFields}. Run `pip-purifier lock`.";
     assert
       lock.version == supportedVersion
       || throw "pip-purifier: ${toString lockFile} has lock format version ${toString lock.version}; this library reads version ${toString supportedVersion}. Run `pip-purifier lock` with the pip-purifier that provides this library.";
