@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 #
-# Runs the lock against the network on a copy of each fixture, and checks
-# that it reproduces the committed lockfile byte for byte: a relock keeps
-# the files of the existing lockfile, so an unchanged project locks the same.
+# The conformance-relock job of CI. Runs the lock against the network on a
+# copy of each fixture, and checks that it reproduces the committed
+# lockfile byte for byte: a relock keeps the files of the existing
+# lockfile, so an unchanged project locks the same.
 set -euo pipefail
 
 cli=$(nix build --no-link --print-out-paths '.#cli')/bin/pip-purifier
@@ -28,3 +29,13 @@ check sources
 check pylock
 check hashed
 check script -- --requirements-from-script app.py
+
+# A lockfile kept outside the project, which `lock --lockfile` relocks in
+# place.
+echo "== hashed, with the lockfile outside the project" >&2
+mkdir "$work/external"
+cp tests/fixtures/hashed/requirements.txt "$work/external/"
+cp tests/fixtures/hashed/pip-purifier.lock.json "$work/external.lock.json"
+(cd "$work/external" && "$cli" lock --lockfile ../external.lock.json)
+test ! -e "$work/external/pip-purifier.lock.json"
+cmp tests/fixtures/hashed/pip-purifier.lock.json "$work/external.lock.json"

@@ -1,51 +1,54 @@
 # SPDX-License-Identifier: MIT
 #
-# buildPipProject: builds a pip project in the Nix sandbox from
-# pip-purifier.lock.json, which `pip-purifier lock` writes beside the
-# project's requirements. The lockfile names every download and every
-# output, so Nix knows the outputs when it evaluates, with no generated Nix
-# files and no import from derivation.
+# buildPipProject (lib.pip-purifier.buildPipProject): builds a pip project
+# in the Nix sandbox from pip-purifier.lock.json, which `pip-purifier lock`
+# writes. The lockfile names every download and every output, so Nix knows
+# the outputs when it evaluates, with no generated Nix files and no import
+# from derivation.
 #
-#   (buildPipProject { src = ./.; }).environment
+#   (buildPipProject { inherit pkgs; src = ./.; }).packages.<name>
+#     the sdist and the wheel of each local project, with the file names
+#     as `.sdist` and `.wheel` and every file under `.files`;
+#   .tests
+#     `checkPhase` run in a copy of the source with the environment's
+#     programs on PATH; without `checkPhase`, pytest when the environment
+#     has it;
+#   .release
+#     every sdist and wheel of `packages`, which `pip-purifier publish`
+#     uploads;
+#   .fetches
+#     the download entries of the lock (readLock), for every system;
+#   .environment
 #     a virtual environment with everything `pip install <recorded args>`
 #     installs, built offline;
 #   .programs.<name>
 #     each program that environment installs, for `nix run`;
-#   .packages.<name>
-#     the sdist and the wheel of each local project, with the file names
-#     as `.sdist` and `.wheel` and every file under `.files`;
 #   .inputs
-#     the locked downloads for this system, which `pip-purifier install`
-#     reads;
-#   .check
-#     the environment with `checkPhase` run in a copy of the source, when
-#     `checkPhase` is given.
+#     the locked downloads for this system, which `pip-purifier prefetch`
+#     and `pip-purifier pip` read.
 {
   lib,
-  stdenv,
-  git,
-  mitm-cache,
-  openssl,
-  python3,
-  runCommand,
-  writeText,
-  pkgs,
   # The library the nix-purifiers share (github:nix-purifiers/purifier).
   purifier,
+  # lib.pip-purifier.readLock (read-lock.nix).
+  readLock,
 }:
 {
-  # The directory pip runs in, which holds the lockfile.
+  pkgs,
+  # The directory pip runs in.
   src,
+  # Replacements for nixpkgs' fetchers, such as a fetchurl that sends
+  # credentials or goes through a mirror, for the purifier library's
+  # fetchEntry and tree.
+  fetchers ? { },
+  # The lockfile, which may lie outside `src`.
   lockFile ? src + "/pip-purifier.lock.json",
   # The lockfile's contents, parsed, in place of reading `lockFile`; the
-  # negative tests give a changed lockfile this way.
-  lockData ? builtins.fromJSON (builtins.readFile lockFile),
+  # conformance checks give a changed lockfile this way.
+  lockData ? null,
   # The Python to install for. Its version must be the one the lock run
   # used.
-  python ? python3,
-  # A replacement for nixpkgs' fetchurl, for credentials or mirrors, which
-  # the purifier library fetches locked files with.
-  fetchurl ? null,
+  python ? pkgs.python3,
   # Local projects outside `src` that the requirements name by a relative
   # path such as "../shared", each with its source.
   pathSources ? { },
@@ -61,99 +64,69 @@ let
   inherit (builtins)
     attrNames
     filter
-    hashFile
-    head
-    sort
-    stringLength
-    substring
     toJSON
     ;
   inherit (lib)
     concatMapStrings
     escapeShellArg
-    hasPrefix
     hasSuffix
     ;
+  inherit (pkgs)
+    stdenv
+    git
+    mitm-cache
+    openssl
+    runCommand
+    writeText
+    ;
 
-  supportedVersion = import ./lock-version.nix;
-  lock = lockData;
   system = stdenv.hostPlatform.system;
   arch = stdenv.hostPlatform.parsed.cpu.name;
 
-  fetchers = {
+  # The lock in memory, checked by the purifier library, and then for this
+  # build's system and Python.
+  read = readLock {
+    inherit
+      src
+      lockFile
+      lockData
+      pathSources
+      ;
+  };
+  lock = purifier.checkLock read;
+  file = toString lockFile;
+  checked = builtins.seq lock (
+    if !(lib.elem system read.lockfile.systems) then
+      throw "pip-purifier: ${file} has no lock for ${system}; it covers ${toString read.lockfile.systems}. Run `pip-purifier lock`."
+    else if python.pythonVersion != read.lockfile.python then
+      throw "pip-purifier: ${file} was made for Python ${read.lockfile.python}, and this build uses Python ${python.pythonVersion}. Pass a `python` of version ${read.lockfile.python}, or run `pip-purifier lock --python` with this one."
+    else
+      read.lockfile
+  );
+
+  fetchArgs = {
     inherit pkgs;
   }
-  // lib.optionalAttrs (fetchurl != null) { inherit fetchurl; };
-  fetch = purifier.fetchEntry fetchers;
+  // fetchers;
+  fetch = purifier.fetchEntry fetchArgs;
   compatible = purifier.wheels {
-    pythonVersion = lock.python;
+    pythonVersion = checked.python;
     inherit arch;
     glibcVersion = lib.versions.majorMinor (lib.getVersion stdenv.cc.libc);
   };
 
-  # A path the lockfile names relative to `src`, which may lead into one of
-  # the `pathSources`.
-  resolve =
-    rel:
-    let
-      keys = sort (a: b: stringLength a > stringLength b) (
-        filter (key: rel == key || hasPrefix "${key}/" rel) (attrNames pathSources)
-      );
-    in
-    if keys == [ ] then
-      src + "/${rel}"
-    else if rel == head keys then
-      pathSources.${head keys}
-    else
-      pathSources.${head keys} + "/${substring (stringLength (head keys) + 1) (-1) rel}";
-
-  staleInputs = filter (
-    rel: !(builtins.pathExists (resolve rel)) || hashFile "sha256" (resolve rel) != lock.inputs.${rel}
-  ) (attrNames lock.inputs);
-
-  requiredFields = [
-    "version"
-    "python"
-    "args"
-    "inputs"
-    "systems"
-    "pins"
-    "versions"
-    "outputs"
-    "sources"
-    "artifacts"
-  ];
-  missingFields = filter (field: !(lock ? ${field})) requiredFields;
-
-  checked =
-    assert
-      builtins.isAttrs lock && missingFields == [ ]
-      || throw "pip-purifier: ${toString lockFile} is not a pip-purifier lockfile: it lacks ${lib.concatStringsSep ", " missingFields}. Run `pip-purifier lock`.";
-    assert
-      lock.version == supportedVersion
-      || throw "pip-purifier: ${toString lockFile} has lock format version ${toString lock.version}; this library reads version ${toString supportedVersion}. Run `pip-purifier lock` with the pip-purifier that provides this library.";
-    assert
-      staleInputs == [ ]
-      || throw "pip-purifier: ${toString lockFile} does not match ${lib.concatStringsSep ", " staleInputs} any more. Run `pip-purifier lock`.";
-    assert
-      lib.elem system lock.systems
-      || throw "pip-purifier: ${toString lockFile} has no lock for ${system}; it covers ${toString lock.systems}. Run `pip-purifier lock`.";
-    assert
-      python.pythonVersion == lock.python
-      || throw "pip-purifier: ${toString lockFile} was made for Python ${lock.python}, and this build uses Python ${python.pythonVersion}. Pass a `python` of version ${lock.python}, or run `pip-purifier lock --python` with this one.";
-    lock;
-
   isFile = entry: entry ? url;
   fileName = entry: baseNameOf entry.path;
-  # The wheels that install here, and every sdist and other archive.
+  # The entries of this system, of which the build keeps the wheels that
+  # install here, and every sdist, archive and checkout.
   files = filter (
     entry: isFile entry && (!(hasSuffix ".whl" entry.path) || compatible (fileName entry))
-  ) checked.artifacts;
+  ) (builtins.seq checked (purifier.entriesFor system read));
   byPath = lib.listToAttrs (
     map (entry: {
       name = entry.path;
       value = entry;
-    }) checked.artifacts
+    }) lock.entries
   );
 
   # Each VCS or URL requirement, as written, to its local copy: a checkout
@@ -184,7 +157,7 @@ let
 
   # The wheels that install here and every sdist and archive, by file name.
   wheelhouse = purifier.tree (
-    fetchers
+    fetchArgs
     // {
       name = "pip-purifier-wheelhouse";
       entries = files;
@@ -309,6 +282,7 @@ let
             ${pip.interpreter} ${scripts}/offline.py tag ${escapeShellArg package.path} ${escapeShellArg package.version}
             ${pip.interpreter} -m pip wheel --no-deps --wheel-dir $out ${escapeShellArg package.path}
             ${pip.interpreter} -m build --sdist --outdir $out ${escapeShellArg package.path}
+            ${pip.interpreter} ${scripts}/offline.py normalize-sdist $out/${escapeShellArg package.sdist}
             for f in ${escapeShellArg wheel} ${escapeShellArg package.sdist}; do
               if [ ! -e "$out/$f" ]; then
                 echo "pip-purifier: the build made $(ls $out), not $f. Run \`pip-purifier lock\`." >&2
@@ -333,30 +307,44 @@ let
     drv
   ) checked.outputs.packages;
 
-  check =
-    if checkPhase == null then
-      null
+  release =
+    if packages == { } then
+      throw "pip-purifier: the project has no local package to release; `release` holds the sdists and wheels of the local projects that pip installs."
     else
-      stdenv.mkDerivation {
-        name = "${name}-check";
-        dontUnpack = true;
-        nativeBuildInputs = [ environment ];
-        buildPhase = ''
-          ${unpack}
-          export PATH=${environment}/bin:$PATH
-          ${checkPhase}
-          touch $out
-        '';
-        dontInstall = true;
+      pkgs.symlinkJoin {
+        name = "${name}-release";
+        paths = lib.attrValues packages;
       };
+
+  testCommand =
+    if checkPhase != null then
+      checkPhase
+    else if lib.elem "pytest" checked.outputs.programs then
+      "pytest"
+    else
+      throw "pip-purifier: the environment has no pytest, so `tests` needs a `checkPhase`.";
+
+  tests = stdenv.mkDerivation {
+    name = "${name}-tests";
+    dontUnpack = true;
+    nativeBuildInputs = [ environment ];
+    buildPhase = ''
+      ${unpack}
+      export PATH=${environment}/bin:$PATH
+      ${testCommand}
+      touch $out
+    '';
+    dontInstall = true;
+  };
 in
 {
   inherit
+    packages
+    tests
+    release
     environment
     programs
-    packages
     inputs
-    check
     ;
-  lock = checked;
+  fetches = lock.entries;
 }

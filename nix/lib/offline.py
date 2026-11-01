@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Installs a project's locked inputs into a virtual environment offline.
 
-The Nix build (build-pip-project.nix) and `pip-purifier install` both run
+The Nix build (build-pip-project.nix) and `pip-purifier prefetch` both run
 this. `inputs` is the directory build-pip-project.nix makes as `inputs`:
 
   wheelhouse/     every locked wheel and sdist for this system
@@ -33,6 +33,8 @@ version, as they did from the real repository.
 """
 
 import argparse
+import gzip
+import io
 import json
 import os
 import re
@@ -40,6 +42,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 
@@ -91,7 +94,10 @@ def serve_repositories(inputs, tmp, env):
     library rebuilt from the recorded commit object; the repository pip
     asked for carries the revision it asked by as a tag on the locked
     commit, or the version when the revision is a commit."""
-    for n, repository in enumerate(load(inputs, "repositories.json")):
+    repositories = load(inputs, "repositories.json")
+    if repositories:
+        serve_full_clones(tmp, env)
+    for n, repository in enumerate(repositories):
         copy = os.path.join(tmp, "repositories", str(n))
         shutil.copytree(repository["path"], copy, symlinks=True)
         subprocess.run(["chmod", "-R", "u+w", copy], check=True)
@@ -108,6 +114,35 @@ def serve_repositories(inputs, tmp, env):
             env[f"GIT_CONFIG_KEY_{count}"] = f"url.file://{copy}.insteadOf"
             env[f"GIT_CONFIG_VALUE_{count}"] = target
             env["GIT_CONFIG_COUNT"] = str(count + 1)
+
+
+def serve_full_clones(tmp, env):
+    """Puts a git first on PATH that clones without `--filter`. pip clones
+    with `--filter=blob:none`, and a partial clone of a shallow repository
+    such as a served copy does not record the copy's shallow commit: each
+    lazy fetch of the commit's parent fetches again from the copy, nested,
+    until the environment no longer fits in the argument space."""
+    real = shutil.which("git", path=env.get("PATH"))
+    if real is None:
+        return
+    bin_dir = os.path.join(tmp, "git-full-clones")
+    os.makedirs(bin_dir)
+    script = os.path.join(bin_dir, "git")
+    with open(script, "w") as f:
+        f.write(
+            "#!/bin/sh\n"
+            'if [ "$1" = clone ]; then\n'
+            "  shift\n"
+            "  for arg; do\n"
+            "    shift\n"
+            '    case "$arg" in --filter=*) ;; *) set -- "$@" "$arg" ;; esac\n'
+            "  done\n"
+            "  set -- clone \"$@\"\n"
+            "fi\n"
+            f'exec {real} "$@"\n'
+        )
+    os.chmod(script, 0o755)
+    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
 
 
 def serve_replays(inputs, tmp, env):
@@ -233,16 +268,23 @@ def install(pip, project, inputs, venv, editable, extra=()):
                 replayer.wait()
 
 
-def run_pip(command, cwd, env):
+def run_pip(command, cwd, env, stdout=False):
     """Runs pip, passing its output through, and turns a requirement it
     cannot find among the locked files into an error that names it and the
-    command that fixes it."""
-    process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    command that fixes it. With `stdout`, pip's standard output goes to
+    standard output untouched, and only its errors are read; otherwise
+    both go to standard error."""
+    if stdout:
+        process = subprocess.Popen(command, cwd=cwd, env=env, stderr=subprocess.PIPE, text=True)
+        lines = process.stderr
+    else:
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        lines = process.stdout
     missing = []
     # pip names a requirement it found no files for either directly, or,
     # when constraints are involved, in an indented list after this line.
     in_list = False
-    for line in process.stdout:
+    for line in lines:
         sys.stderr.write(line)
         m = re.search(r"No matching distribution found for (\S+)", line)
         if m:
@@ -262,6 +304,23 @@ def run_pip(command, cwd, env):
         raise SystemExit(f"pip-purifier: pip failed with exit status {process.returncode}")
 
 
+def normalize_sdist(path, mtime):
+    """Rewrites the sdist at `path` so that it depends only on its files:
+    setuptools stamps each member and the gzip header with the time of the
+    build. Every member gets the time `mtime` and no owner, and the gzip
+    header gets no time and no file name. The members keep their order."""
+    with tarfile.open(path, "r:gz") as source:
+        members = [(member, source.extractfile(member).read() if member.isfile() else None) for member in source.getmembers()]
+    with open(path, "wb") as f, gzip.GzipFile(filename="", mode="wb", fileobj=f, mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as target:
+            for member, data in members:
+                member.mtime = mtime
+                member.uid = member.gid = 0
+                member.uname = member.gname = ""
+                member.pax_headers = {}
+                target.addfile(member, io.BytesIO(data) if data is not None else None)
+
+
 def main():
     if sys.argv[1:2] == ["tag"]:
         # `offline.py tag DIRECTORY VERSION`, for builds that run pip
@@ -269,6 +328,10 @@ def main():
         directory, version = sys.argv[2:4]
         if not os.path.exists(os.path.join(directory, ".git")):
             tag(directory, version)
+        return
+    if sys.argv[1:2] == ["normalize-sdist"]:
+        # `offline.py normalize-sdist PATH`, after a build of an sdist.
+        normalize_sdist(sys.argv[2], int(os.environ.get("SOURCE_DATE_EPOCH", "0")))
         return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", required=True)

@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: MIT
-"""pip-purifier: lock, install and publish pip projects that Nix builds.
+"""pip-purifier: lock, prefetch and publish pip projects that Nix builds.
 
 `lock` runs `pip install` once for real, through a recording index proxy on
 localhost, and writes pip-purifier.lock.json: every file pip downloaded
 (including what the isolated build environments of sdists downloaded), the
 checkout of every VCS requirement, and the versions pip resolved, for each
-Nix system. `install` and `pip` run pip offline from the files the lockfile
-names, which Nix fetches. `publish` uploads what the Nix build made.
+Nix system. `prefetch` has Nix fetch the locked files, keeps them with a
+garbage-collector root, and installs the project into .venv offline. `pip`
+runs pip offline from the same files. `publish` uploads the release that the
+Nix build made.
 """
 
 import argparse
@@ -49,7 +51,7 @@ SYSTEMS = {"x86_64-linux": "x86_64", "aarch64-linux": "aarch64"}
 
 # The manylinux glibc versions a lock run asks for. A newer glibc runs
 # wheels for every older one; the Nix build keeps the wheels its own glibc
-# runs (nix/lib/wheels.nix).
+# runs (`wheels` of the purifier library).
 GLIBC_MINORS = range(5, 45)
 
 
@@ -479,16 +481,46 @@ def hash_inputs(project, inputs):
     return out
 
 
-def read_lock(project):
-    path = os.path.join(project, LOCKFILE)
+# The top-level fields of a lockfile. nix/lib/read-lock.nix requires the
+# same.
+LOCK_FIELDS = ["version", "hash", "pip", "python", "args", "inputs", "systems", "pins", "versions", "outputs", "sources", "artifacts"]
+
+
+def lock_hash(lock):
+    """The hash a lockfile holds of its own content: the SHA-256, in SRI
+    form, of the lockfile without `hash` as compact JSON with sorted keys.
+    Nix computes the same with builtins.toJSON (nix/lib/read-lock.nix)."""
+    content = {k: v for k, v in lock.items() if k != "hash"}
+    text = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return sri(hashlib.sha256(text.encode()).digest())
+
+
+def lockfile_path(ns, project):
+    """The lockfile of a command: from --lockfile, else from
+    PIP_PURIFIER_LOCKFILE, else pip-purifier.lock.json in the project."""
+    given = ns.lockfile or os.environ.get("PIP_PURIFIER_LOCKFILE")
+    return os.path.abspath(given) if given else os.path.join(project, LOCKFILE)
+
+
+def read_lock(project, path):
+    """The lockfile at `path`, for the project directory `project`, or an
+    exit with what is wrong with it and the command that fixes it."""
     if not os.path.exists(path):
         die(f"{path} does not exist. Run `pip-purifier lock`.")
-    with open(path) as f:
-        lock = json.load(f)
-    if lock.get("version") != FORMAT_VERSION:
-        die(f"{path} has lock format version {lock.get('version')}; this pip-purifier reads version {FORMAT_VERSION}. Run `pip-purifier lock`.")
-    missing = [rel for rel in lock["inputs"] if not os.path.exists(os.path.join(project, rel))]
-    if missing or hash_inputs(project, lock["inputs"]) != lock["inputs"]:
+    try:
+        with open(path) as f:
+            lock = json.load(f)
+    except ValueError as error:
+        die(f"{path} is not valid JSON ({error}). Run `pip-purifier lock`.")
+    missing = [field for field in LOCK_FIELDS if field not in lock] if isinstance(lock, dict) else LOCK_FIELDS
+    if missing:
+        die(f"{path} is not a pip-purifier lockfile: it lacks {', '.join(missing)}. Run `pip-purifier lock`.")
+    if lock["version"] != FORMAT_VERSION:
+        die(f"{path} has lock format version {lock['version']}; this pip-purifier reads version {FORMAT_VERSION}. Run `pip-purifier lock`.")
+    if lock["hash"] != lock_hash(lock):
+        die(f"{path} was changed after `pip-purifier lock` wrote it: its content does not match its hash. Run `pip-purifier lock`.")
+    gone = [rel for rel in lock["inputs"] if not os.path.exists(os.path.join(project, rel))]
+    if gone or hash_inputs(project, lock["inputs"]) != lock["inputs"]:
         die(f"{path} does not match the project's requirements any more. Run `pip-purifier lock`.")
     return lock
 
@@ -552,14 +584,14 @@ def pins_of(items, proxy):
     return sorted(set(pins))
 
 
-def previous_files(project):
-    """The files of the existing lockfile, by normalized project name, which
-    a relock keeps (Proxy.keep). Empty when there is no usable lockfile."""
+def previous_files(path):
+    """The files of the existing lockfile at `path`, by normalized project
+    name, which a relock keeps (Proxy.keep). Empty when there is no usable
+    lockfile. Every format version so far has the same `artifacts`, so a
+    relock in a new format keeps the files of the old one."""
     try:
-        with open(os.path.join(project, LOCKFILE)) as f:
+        with open(path) as f:
             previous = json.load(f)
-        if previous.get("version") != FORMAT_VERSION:
-            return {}
         artifacts = previous["artifacts"]
     except (OSError, ValueError, KeyError):
         return {}
@@ -573,6 +605,7 @@ def previous_files(project):
 
 def lock(ns):
     project = os.getcwd()
+    lockfile = lockfile_path(ns, project)
     args = ns.pip_args or default_args(project)
     python = ns.python or PYTHON
     pyver = subprocess.run(
@@ -587,6 +620,11 @@ def lock(ns):
         env = lock_environment(tmp, proxy, index, extra, links)
         rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "lock", index=proxy.upstream)
         lock_args = rewriter.args(args)
+        # A pylock.toml pins every version, and does not record the
+        # requirements `pip lock` resolved it from.
+        pylocks = [rel for rel in rewriter.inputs if re.fullmatch(r"pylock(\.[^/]+)?\.toml", os.path.basename(rel))]
+        if ns.update is not None and pylocks:
+            die(f"{', '.join(pylocks)} pins the versions. Run `pip lock` with the project's requirements to update it, then `pip-purifier lock`.")
 
         # The real install, on this system: pip resolves, downloads and
         # builds every sdist, so the files of the build environments pass
@@ -597,9 +635,13 @@ def lock(ns):
         install = ["--python", os.path.join(venv, "bin", "python"), "install", "--report", report, *lock_args]
 
         # A relock keeps the files of the existing lockfile, for the
-        # requirements and for every build environment, unless --upgrade:
-        # the proxy lists only those files for a project they cover.
-        proxy.keep = {} if ns.upgrade else previous_files(project)
+        # requirements and for every build environment: the proxy lists
+        # only those files for a project they cover. `update` keeps none,
+        # or none of the packages it names.
+        proxy.keep = previous_files(lockfile)
+        if ns.update is not None:
+            names = {normalize(name) for name in ns.update}
+            proxy.keep = {name: files for name, files in proxy.keep.items() if names and name not in names}
         if proxy.keep and not run_pip(install, env, project, check=False):
             log("the requirements need versions the existing lockfile does not have; resolving afresh")
             proxy.keep = {}
@@ -801,19 +843,34 @@ def lock(ns):
             "shims": sorted(shims, key=lambda r: r["url"]),
             "artifacts": sorted(artifacts.values(), key=lambda a: a["path"]),
         }
-    path = os.path.join(project, LOCKFILE)
-    with open(path, "w") as f:
-        json.dump(lock, f, indent=2)
+        lock["hash"] = lock_hash(lock)
+    # Sorted keys, so that the lockfile does not depend on which system the
+    # lock ran on.
+    with open(lockfile, "w") as f:
+        json.dump(lock, f, indent=2, sort_keys=True)
         f.write("\n")
-    log(f"wrote {path} with {len(lock['artifacts'])} downloads")
+    log(f"wrote {lockfile} with {len(lock['artifacts'])} downloads")
+
+
+def update(ns):
+    """`lock` with the `pip install` arguments that the existing lockfile
+    records, keeping none of the files of the named packages, or none at
+    all."""
+    try:
+        with open(lockfile_path(ns, os.getcwd())) as f:
+            ns.pip_args = json.load(f)["args"]
+    except (OSError, ValueError, KeyError, TypeError):
+        ns.pip_args = []
+    lock(ns)
 
 
 # Nix.
 
 
-def nix_build(project, attr, out_link=None):
-    lock_ = read_lock(project)
-    del lock_
+def nix_build(project, lockfile, attr, out_link=None):
+    """Builds the output `attr` of buildPipProject (nix/lib/cli.nix) for the
+    project, after checking its lockfile."""
+    read_lock(project, lockfile)
     command = [
         "nix-build",
         os.path.join(NIX_LIB, "cli.nix"),
@@ -824,29 +881,55 @@ def nix_build(project, attr, out_link=None):
         "src",
         project,
         "--argstr",
+        "lockFile",
+        lockfile,
+        "--argstr",
         "attr",
         attr,
     ]
     command += ["--out-link", out_link] if out_link else ["--no-out-link"]
-    result = subprocess.run(command, stdout=subprocess.PIPE, text=True)
+    result = subprocess.run(command, stdout=subprocess.PIPE, text=True, check=False)
     if result.returncode != 0:
         die("nix-build failed")
     return result.stdout.strip().splitlines()[-1]
 
 
-def inputs_of(project):
-    """The project's offline inputs, kept alive by a GC root under
-    .pip-purifier/."""
-    root = os.path.join(project, ".pip-purifier")
+def roots(lockfile):
+    """The directory of the garbage-collector roots, .pip-purifier/ beside
+    the lockfile."""
+    root = os.path.join(os.path.dirname(lockfile), ".pip-purifier")
     os.makedirs(root, exist_ok=True)
     with open(os.path.join(root, ".gitignore"), "w") as f:
         f.write("*\n")
-    return nix_build(project, "inputs", out_link=os.path.join(root, "inputs"))
+    return root
 
 
-def install(ns):
+def inputs_of(project, lockfile):
+    """The project's offline inputs, kept alive by a garbage-collector root
+    under .pip-purifier/."""
+    return nix_build(project, lockfile, "inputs", out_link=os.path.join(roots(lockfile), "inputs"))
+
+
+def prefetch_command(ns):
+    """Realizes what the everyday loop and the editor need, and installs
+    the project into a virtual environment offline: the locked downloads
+    for this system, and this command with its Python, pip, nixpkgs and
+    purifier library, each kept alive by a root under .pip-purifier/."""
     project = os.getcwd()
-    inputs = ns.inputs or inputs_of(project)
+    lockfile = lockfile_path(ns, project)
+    if ns.inputs:
+        inputs = ns.inputs
+    else:
+        inputs = inputs_of(project, lockfile)
+        # This command's package holds the Python of the virtual
+        # environment, the pip that installs offline, and the nixpkgs and
+        # purifier library that `pip` builds the inputs with.
+        package = os.path.dirname(os.path.dirname(os.path.dirname(NIX_LIB)))
+        subprocess.run(
+            ["nix-store", "--add-root", os.path.join(roots(lockfile), "pip-purifier"), "--realise", package],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
     venv = os.path.abspath(ns.venv)
     if not os.path.exists(os.path.join(venv, "bin", "python")):
         subprocess.run([PYTHON, "-m", "venv", "--without-pip", venv], check=True)
@@ -855,28 +938,19 @@ def install(ns):
 
 def pip(ns):
     project = os.getcwd()
-    inputs = inputs_of(project)
+    inputs = inputs_of(project, lockfile_path(ns, project))
     env = offline.environment(inputs)
     env["PIP_CONSTRAINT"] = os.path.join(inputs, "pins.txt")
-    os.execvpe(PIP[0], PIP + ns.pip_args, env)
-
-
-def build(ns):
-    print(nix_build(os.getcwd(), ns.output))
+    offline.run_pip(PIP + ns.pip_args, project, env, stdout=True)
 
 
 def publish(ns):
     project = os.getcwd()
-    packages = list(read_lock(project)["outputs"]["packages"])
-    if ns.package:
-        if ns.package not in packages:
-            die(f"the project has no package {ns.package}; its packages are: {', '.join(packages) or 'none'}")
-        name = ns.package
-    elif len(packages) == 1:
-        name = packages[0]
-    else:
-        die(f"name the package to publish with --package; the project's packages are: {', '.join(packages) or 'none'}")
-    out = nix_build(project, f"packages.{name}")
+    lockfile = lockfile_path(ns, project)
+    packages = list(read_lock(project, lockfile)["outputs"]["packages"])
+    if ns.package and ns.package not in packages:
+        die(f"the project has no package {ns.package}; its packages are: {', '.join(packages) or 'none'}")
+    out = nix_build(project, lockfile, f"packages.{ns.package}" if ns.package else "release")
     files = sorted(os.path.join(out, n) for n in os.listdir(out))
     if not files:
         die(f"{out} holds no distributions")
@@ -889,39 +963,60 @@ def main():
     parser = argparse.ArgumentParser(prog="pip-purifier", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 
+    lockfile_help = "the lockfile to write or read (default: pip-purifier.lock.json in the current directory)"
+
     p = commands.add_parser("lock", help="write pip-purifier.lock.json")
+    p.add_argument("--lockfile", help=lockfile_help)
     p.add_argument("--python", help="the Python interpreter pip installs for (default: the Python of this package set)")
     p.add_argument("--system", action="append", choices=list(SYSTEMS), help="a Nix system to lock for (default: all)")
-    p.add_argument("--upgrade", action="store_true", help="resolve afresh instead of keeping the versions of the existing lockfile")
     p.add_argument("pip_args", nargs="*", metavar="-- PIP-ARG", help="the arguments of `pip install` (default: -r pylock.toml, -r requirements.txt, or .)")
-    p.set_defaults(run=lock)
+    p.set_defaults(run=lock, update=None)
 
-    p = commands.add_parser("install", help="install into a virtual environment offline")
+    p = commands.add_parser(
+        "update",
+        help="resolve the named packages afresh, or every package, and write pip-purifier.lock.json",
+    )
+    p.add_argument("--lockfile", help=lockfile_help)
+    p.add_argument("--python", help="the Python interpreter pip installs for (default: the Python of this package set)")
+    p.add_argument("--system", action="append", choices=list(SYSTEMS), help="a Nix system to lock for (default: all)")
+    p.add_argument("update", nargs="*", metavar="PACKAGE", help="a package to update (default: every package)")
+    p.set_defaults(run=update)
+
+    p = commands.add_parser(
+        "prefetch",
+        help="realize the locked downloads and this command with garbage-collector roots, and install into a virtual environment offline",
+    )
+    p.add_argument("--lockfile", help=lockfile_help)
     p.add_argument("--venv", default=".venv")
     p.add_argument("--inputs", help="the inputs Nix built (default: build them with nix-build)")
     p.add_argument("pip_args", nargs="*", metavar="-- PIP-ARG", help="more arguments for `pip install`")
-    p.set_defaults(run=install)
+    p.set_defaults(run=prefetch_command)
 
     p = commands.add_parser(
         "pip",
         help="run pip offline on the locked files; pass --python .venv/bin/python to act on a virtual environment",
     )
+    p.add_argument("--lockfile", help=lockfile_help)
     p.add_argument("pip_args", nargs=argparse.REMAINDER)
     p.set_defaults(run=pip)
 
-    p = commands.add_parser("build", help="build an output of the project with Nix and print its path")
-    p.add_argument("output", help="environment, inputs, programs.<name> or packages.<name>")
-    p.set_defaults(run=build)
-
-    p = commands.add_parser("publish", help="upload the sdist and wheel Nix built, with `uv publish`")
-    p.add_argument("--package", help="the local project to publish (default: the only one)")
+    p = commands.add_parser("publish", help="upload the release Nix built, with `uv publish`")
+    p.add_argument("--lockfile", help=lockfile_help)
+    p.add_argument("--package", help="publish only this local project (default: every one)")
     p.add_argument("--dry-run", action="store_true", help="check the upload without making it")
     p.add_argument("uv_args", nargs="*", metavar="-- UV-PUBLISH-ARG")
     p.set_defaults(run=publish)
 
-    # Everything after `pip` goes to pip unparsed, options included.
+    # Everything after `pip` and its own --lockfile goes to pip unparsed,
+    # options included.
     if sys.argv[1:2] == ["pip"] and sys.argv[2:3] not in (["-h"], ["--help"]):
-        pip(argparse.Namespace(pip_args=sys.argv[2:]))
+        rest = sys.argv[2:]
+        lockfile = None
+        if rest[:1] == ["--lockfile"] and len(rest) > 1:
+            lockfile, rest = rest[1], rest[2:]
+        elif rest[:1] and rest[0].startswith("--lockfile="):
+            lockfile, rest = rest[0].split("=", 1)[1], rest[1:]
+        pip(argparse.Namespace(lockfile=lockfile, pip_args=rest))
         return
     ns = parser.parse_args()
     ns.run(ns)

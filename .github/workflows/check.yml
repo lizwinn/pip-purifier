@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 #
-# Runs the whole suite on x86_64-linux and aarch64-linux: the flake's checks
-# (the fixture builds in the Nix sandbox, the unit and negative tests, the
-# offline install and the formatting), their evaluation for every system, a
-# lock run against the network that has to reproduce each committed
-# lockfile byte for byte, and the commands that build with Nix themselves.
+# Runs the whole suite on x86_64-linux and aarch64-linux. `check` runs the
+# flake's checks, which include the conformance checks that the sandbox can
+# run, and their evaluation for every system. The conformance checks that
+# need the network or a second build run as jobs of the same name, and
+# `real-world` works through a real project pinned to a commit.
 name: check
 
 on:
@@ -30,9 +30,76 @@ jobs:
         run: nix flake check -L
       - name: Evaluation for every system
         run: nix flake check --all-systems --no-build
-      - name: Lock run reproduces the lockfiles
-        run: tests/lock-run.sh
-      - name: Commands that build with Nix
-        run: tests/interactive.sh
-      - name: A real project (pallets/click 8.1.8)
-        run: tests/real-world.sh
+
+  # A relock of each fixture reproduces its lockfile byte for byte.
+  conformance-relock:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - run: tests/lock-run.sh
+
+  # `nix build --rebuild` of the fixture sdist and wheel gives the same
+  # output.
+  conformance-rebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - run: |
+          system=$(nix eval --impure --raw --expr builtins.currentSystem)
+          nix build -L ".#checks.$system.conformance-rebuild"
+          nix build -L --rebuild ".#checks.$system.conformance-rebuild"
+
+  # After `prefetch` and a garbage collection, the everyday loop works with
+  # the network cut.
+  conformance-offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - run: tests/offline.sh
+        env:
+          PIP_PURIFIER_TEST_GC: "1"
+
+  # `update` moves a pinned package to a newer version that the stale
+  # check accepts.
+  conformance-update:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - run: tests/update.sh
+
+  # pallets/click 8.1.8, pinned to a commit.
+  real-world:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - run: tests/real-world.sh

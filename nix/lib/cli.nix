@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: MIT
 #
-# What the `pip-purifier` command builds for a project directory given as an
-# absolute path, with the nixpkgs the command was built with: `attr` is
-# "inputs", "environment" or "packages.<name>".
+# What the `pip-purifier` command builds for a project directory and a
+# lockfile, each given as an absolute path, with the nixpkgs the command was
+# built with: `attr` is "inputs", "release" or "packages.<name>".
 #
 # A local project that the requirements name by a path outside the project
 # directory is read from that path.
 {
   nixpkgs,
   src,
+  lockFile,
   attr,
 }:
 let
@@ -36,20 +37,23 @@ let
     };
 
   root = /. + src;
-  lock = builtins.fromJSON (builtins.readFile (root + "/pip-purifier.lock.json"));
+  lockPath = /. + lockFile;
+  lock = builtins.fromJSON (builtins.readFile lockPath);
   outside = lib.unique (
     map dirOf (builtins.filter (rel: lib.hasPrefix "../" rel) (builtins.attrNames lock.inputs))
   );
   pathSources = lib.genAttrs outside (rel: source (/. + "${src}/${rel}"));
 
   # The purifier library at the revision this pip-purifier's flake.lock
-  # pins, which the CLI package installs beside this file.
-  flakeLock = builtins.fromJSON (builtins.readFile ./flake.lock);
-  purifierNode = flakeLock.nodes.${flakeLock.nodes.root.inputs.purifier};
-  purifier = import (builtins.fetchTree purifierNode.locked + "/nix/lib") { inherit lib; };
+  # pins, which the command's package links beside this directory.
+  purifier = import ../purifier/nix/lib { inherit lib; };
 
-  project = pkgs.callPackage ./build-pip-project.nix { inherit purifier; } {
+  inherit (import ./read-lock.nix { inherit lib; }) readLock;
+  project = import ./build-pip-project.nix { inherit lib purifier readLock; } {
+    inherit pkgs;
     src = source root;
+    lockFile = lockPath;
+    lockData = lock;
     inherit pathSources;
   };
 in

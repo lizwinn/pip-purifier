@@ -28,23 +28,41 @@ The lock run then:
 6. for every package version any system uses, fetches a wheel for each
    system's CPU, or the sdist when no such wheel exists.
 
+A relock keeps the files of the existing lockfile: the proxy lists only
+those files for each package they cover. `update` drops them for the named
+packages, or for every package. The lockfile is written with sorted keys,
+so it does not depend on the system the lock ran on.
+
 ## The lockfile
 
-`version`, `pip` and `python` identify the lock. `args` are the pip install
-arguments. `inputs` maps each file the arguments name (and the
-`pyproject.toml`, `setup.py` and `setup.cfg` of each local project) to its
-SHA-256; the Nix library and the CLI refuse a lock whose inputs changed.
-`pins` holds `name==version` for each system. `versions` holds the version
-of each package built from a checkout (by requirement URL) or a local
-directory (by path). `outputs` names programs and packages. `sources` maps
-each VCS or URL requirement to its download, `repositories` lists the git
-repositories named in package metadata, and `artifacts` holds every
-download in the entry shapes of the nix-purifiers/purifier library, which
-`nix/lib/fetch.nix` fetches until that library is published.
+`version`, `pip` and `python` identify the lock, and `hash` is the SHA-256
+of the rest of the lockfile as compact JSON with sorted keys. Both the
+command (`lock_hash`) and the Nix library (`nix/lib/read-lock.nix`) compute
+it, so an edit by hand fails. `args` are the pip install arguments.
+`inputs` maps each file the arguments name (and the `pyproject.toml`,
+`setup.py` and `setup.cfg` of each local project) to its SHA-256; the Nix
+library and the command refuse a lock whose inputs changed. `pins` holds
+`name==version` for each system. `versions` holds the version of each
+package built from a checkout (by requirement URL) or a local directory (by
+path). `outputs` names programs and packages. `sources` maps each VCS or
+URL requirement to its download, `repositories` lists the git repositories
+named in package metadata, and `artifacts` holds every download in the
+entry shapes of the nix-purifiers/purifier library.
+
+## The Nix library
+
+`readLock` (`nix/lib/read-lock.nix`) reads the lockfile into the lock shape
+of the purifier contract: the artifacts as `entries`, each wheel for one
+CPU with its `systems`, the local projects as `outputs`, and the reasons the
+lockfile cannot be used as `problems`. `buildPipProject` passes it to the
+library's `checkLock`, then checks the system and the Python version, and
+takes this system's downloads from `entriesFor`, of which it keeps the
+wheels that the build's glibc and Python run. The library's `fetchEntry`
+and `tree` fetch them with `fetchers`.
 
 ## The offline install (`nix/lib/offline.py`)
 
-The Nix build and `pip-purifier install` both rewrite the recorded
+The Nix build and `pip-purifier prefetch` both rewrite the recorded
 arguments in "offline" mode: index options go away, and each VCS or URL
 requirement points at its local copy. pip runs with `--no-index`, the
 wheelhouse as find-links, and the pins as constraints.
@@ -54,9 +72,11 @@ writable directory first. The copy, and in the Nix build each local project
 without `.git`, becomes a one-commit git repository tagged with the
 recorded version, so setuptools-scm and hatch-vcs derive the same version
 as in the lock run. A git repository named in package metadata is served to
-the git that pip runs through `url.<copy>.insteadOf`. The copy is the plain
-checkout with a `.git` rebuilt from its files, its submodule commits and the
-recorded commit object, checked against the locked tree and commit, with
-the revision pip asks for as a tag. A Mercurial, Subversion or Bazaar
+the git that pip runs through `url.<copy>.insteadOf`. The copy is the
+checkout with the shallow `.git` that the purifier library rebuilt from the
+recorded commit object, with the revision pip asks for as a tag. A git
+wrapper first on `PATH` drops the `--filter` of pip's `git clone`: a
+partial clone of a shallow repository fetches the shallow commit's parent
+again and again. A Mercurial, Subversion or Bazaar
 repository named in metadata is answered by `nix/lib/vcs_shim.py`, and a URL
 named in metadata by `mitm-cache replay`.

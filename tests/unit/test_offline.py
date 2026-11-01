@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Unit tests of nix/lib/offline.py and nix/lib/vcs_shim.py: tagging a copy
-with its locked version, and the answers of the hg, svn and bzr shims."""
+with its locked version, the git that clones without a filter, and the
+answers of the hg, svn and bzr shims."""
 
 import json
 import os
@@ -24,6 +25,24 @@ class Tag(unittest.TestCase):
             self.assertEqual(described.stdout.strip(), "1.2.3")
             status = subprocess.run(["git", "status", "--porcelain"], cwd=tmp, capture_output=True, text=True, check=True)
             self.assertEqual(status.stdout, "")
+
+
+class FullClones(unittest.TestCase):
+    def test_clone_drops_filter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = os.path.join(tmp, "real")
+            os.makedirs(real)
+            with open(os.path.join(real, "git"), "w") as f:
+                f.write('#!/bin/sh\nprintf "%s|" "$@"\n')
+            os.chmod(os.path.join(real, "git"), 0o755)
+            env = {"PATH": real}
+            offline.serve_full_clones(tmp, env)
+
+            def run(*args):
+                return subprocess.run(["git", *args], env=env, capture_output=True, text=True, check=True).stdout
+
+            self.assertEqual(run("clone", "--filter=blob:none", "--quiet", "u r l", "dest"), "clone|--quiet|u r l|dest|")
+            self.assertEqual(run("fetch", "--filter=blob:none", "origin"), "fetch|--filter=blob:none|origin|")
 
 
 class Shims(unittest.TestCase):

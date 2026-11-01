@@ -1,7 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Unit tests of src/pip_purifier.py: wheel tags, file names, platform
-arguments and URL handling."""
+arguments, URL handling, and the checks of a lockfile."""
 
+import contextlib
+import io
+import json
+import os
+import tempfile
 import unittest
 
 import pip_purifier as pp
@@ -51,6 +56,78 @@ class Urls(unittest.TestCase):
 
     def test_sri(self):
         self.assertEqual(pp.sri(bytes(32)), "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+
+
+class Lockfiles(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.project = os.path.join(self.tmp.name, "project")
+        os.makedirs(self.project)
+        with open(os.path.join(self.project, "requirements.txt"), "w") as f:
+            f.write("six\n")
+        self.lock = {field: {} for field in pp.LOCK_FIELDS}
+        self.lock.update(
+            version=pp.FORMAT_VERSION,
+            args=["-r", "requirements.txt"],
+            inputs=pp.hash_inputs(self.project, ["requirements.txt"]),
+            artifacts=[],
+        )
+        self.lock["hash"] = pp.lock_hash(self.lock)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, text, path=None):
+        path = path or os.path.join(self.project, pp.LOCKFILE)
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def fails(self, path, expected):
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(stderr):
+            pp.read_lock(self.project, path)
+        self.assertIn(expected, stderr.getvalue())
+        self.assertIn("Run `pip-purifier lock`", stderr.getvalue())
+
+    def test_hash_matches_nix(self):
+        # builtins.toJSON of the same set, hashed by Nix (nix/lib/read-lock.nix).
+        lock = {
+            "version": 3,
+            "hash": "x",
+            "args": ["-r", "requirements.txt"],
+            "inputs": {"requirements.txt": "00"},
+            "outputs": {"programs": [], "packages": {}},
+            "note": 'é/"\\',
+            "ok": True,
+            "none": None,
+        }
+        self.assertEqual(pp.lock_hash(lock), "sha256-hjNJE0mwc4z7HFetRD1xnr1O2wpAoj3/fOJDGgy8VbU=")
+
+    def test_reads_a_good_lockfile_inside_and_outside_the_project(self):
+        text = json.dumps(self.lock)
+        self.assertEqual(pp.read_lock(self.project, self.write(text)), self.lock)
+        outside = self.write(text, os.path.join(self.tmp.name, "elsewhere.json"))
+        self.assertEqual(pp.read_lock(self.project, outside), self.lock)
+
+    def test_missing(self):
+        self.fails(os.path.join(self.project, pp.LOCKFILE), "does not exist")
+
+    def test_malformed(self):
+        self.fails(self.write("{"), "is not valid JSON")
+        self.fails(self.write("[]"), "is not a pip-purifier lockfile")
+        lacking = {k: v for k, v in self.lock.items() if k != "artifacts"}
+        self.fails(self.write(json.dumps(lacking)), "it lacks artifacts")
+
+    def test_tampered(self):
+        tampered = dict(self.lock, artifacts=[{"path": "six.whl", "url": "u", "mirrors": [], "hash": "sha256-x"}])
+        self.fails(self.write(json.dumps(tampered)), "was changed after `pip-purifier lock` wrote it")
+
+    def test_stale(self):
+        path = self.write(json.dumps(self.lock))
+        with open(os.path.join(self.project, "requirements.txt"), "a") as f:
+            f.write("idna\n")
+        self.fails(path, "does not match the project's requirements any more")
 
 
 if __name__ == "__main__":

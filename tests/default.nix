@@ -4,35 +4,34 @@
 # access is the fixed-output fetches of locked downloads.
 {
   pkgs,
-  # The flake's default package overlay, which adds buildPipProject.
-  overlay,
+  # lib.pip-purifier.buildPipProject of this flake.
+  buildPipProject,
   cli,
 }:
 let
-  inherit (pkgs) lib;
+  inherit (pkgs) lib runCommand;
 
-  # Every fixture builds the way a consumer's package does: through
-  # buildPipProject of a package set the overlay applies to.
-  withOverlay = pkgs.extend overlay;
-  inherit (withOverlay) buildPipProject runCommand;
+  # Every fixture builds the way a consumer's package does: through the
+  # builder of this flake's library, with a package set.
+  build = args: buildPipProject ({ inherit pkgs; } // args);
 
   # A local setuptools project installed with `-e .`, with a console
   # script, a wheel, an sdist-only dependency (docopt, built with the locked
   # setuptools) and a dependency with platform wheels (PyYAML).
-  project = buildPipProject { src = ./fixtures/project; };
+  project = build { src = ./fixtures/project; };
 
   # A git requirement whose version comes from git (attrs, with hatch-vcs),
   # a URL archive (six), a local directory and a nested requirements file.
   # The local directory depends on a git repository (iniconfig, also
   # versioned with hatch-vcs) and on a URL (pyparsing) through its own
   # metadata.
-  sources = buildPipProject { src = ./fixtures/sources; };
+  sources = build { src = ./fixtures/sources; };
 
   # A pylock.toml that `pip lock` wrote.
-  pylock = buildPipProject { src = ./fixtures/pylock; };
+  pylock = build { src = ./fixtures/pylock; };
 
   # The PEP 723 dependencies of a script, tested with `checkPhase`.
-  script = buildPipProject {
+  script = build {
     src = ./fixtures/script;
     checkPhase = ''
       output=$(python app.py)
@@ -42,7 +41,7 @@ let
   };
 
   # A requirements file with --hash pins, as pip-compile writes it.
-  hashed = buildPipProject { src = ./fixtures/hashed; };
+  hashed = build { src = ./fixtures/hashed; };
 
   # A local package that names a Mercurial, a Subversion and a Bazaar
   # repository as sources in its own metadata, installed offline with the
@@ -156,17 +155,19 @@ let
       touch $out
     '';
 
-  # Runs `pip-purifier install` in a copy of a fixture, with the inputs Nix
-  # built for it, then runs a program of the .venv. `edit` changes the
-  # source afterwards: an editable install prints the change.
-  installs =
-    name: fixture: inputs: program: expected: edit: edited:
-    runCommand "pip-purifier-test-install-${name}" { nativeBuildInputs = [ cli ]; } ''
+  # The everyday loop with no network, which the sandbox has none of: runs
+  # `pip-purifier prefetch` in a copy of a fixture, with the inputs Nix
+  # built for it in place of its own nix-build, then runs a program of the
+  # .venv. `edit` changes the source afterwards: an editable install prints
+  # the change.
+  offline =
+    fixture: inputs: program: expected: edit: edited:
+    runCommand "pip-purifier-conformance-offline" { nativeBuildInputs = [ cli ]; } ''
       cp -r ${fixture} project
       chmod -R u+w project
       cd project
       export HOME=$TMPDIR
-      pip-purifier install --inputs ${inputs}
+      pip-purifier prefetch --inputs ${inputs}
       check() {
         output=$(.venv/bin/${program})
         echo "$output"
@@ -180,23 +181,63 @@ let
       check ${lib.escapeShellArg edited}
       touch $out
     '';
+
+  # The hashed fixture without its lockfile, built from the lockfile kept
+  # outside it, as a packaging flake builds a project it does not change.
+  external = build {
+    src = lib.fileset.toSource {
+      root = ./fixtures/hashed;
+      fileset = lib.fileset.difference ./fixtures/hashed ./fixtures/hashed/pip-purifier.lock.json;
+    };
+    lockFile = ./fixtures/hashed/pip-purifier.lock.json;
+  };
 in
 {
   project = runs "project" project.programs.greet "hello attrs=25.3.0 docopt=0.6.2 yaml=6.0.3";
 
   # The local project's sdist and wheel, under the names the lockfile
-  # gives them.
+  # gives them, and the release that holds them.
   project-package = runCommand "pip-purifier-test-project-package" { } ''
     test -f ${project.packages.greet.files."greet-0.1.0-py3-none-any.whl"}
     test -f ${project.packages.greet.files."greet-0.1.0.tar.gz"}
+    test -f ${project.release}/greet-0.1.0-py3-none-any.whl
+    test -f ${project.release}/greet-0.1.0.tar.gz
     touch $out
   '';
 
-  install-project =
-    installs "project" ./fixtures/project project.inputs "greet"
-      "hello attrs=25.3.0 docopt=0.6.2 yaml=6.0.3"
+  # The download entries of the lock: the fixture locks a PyYAML wheel for
+  # each system, which carries that system in `systems`, and a wheel for
+  # every platform, which carries none.
+  fetches =
+    let
+      systemsOf =
+        prefix:
+        map (entry: entry.systems or null) (
+          lib.filter (entry: lib.hasPrefix prefix (baseNameOf entry.path)) project.fetches
+        );
+      pyyaml = lib.sort (a: b: lib.head a < lib.head b) (systemsOf "pyyaml-");
+    in
+    assert lib.assertMsg (
+      pyyaml == [
+        [ "aarch64-linux" ]
+        [ "x86_64-linux" ]
+      ]
+      && systemsOf "attrs-" == [ null ]
+    ) "pip-purifier: fetches gives PyYAML the systems ${builtins.toJSON pyyaml}";
+    runCommand "pip-purifier-test-fetches" { } "touch $out";
+
+  conformance-offline =
+    offline ./fixtures/project project.inputs "greet" "hello attrs=25.3.0 docopt=0.6.2 yaml=6.0.3"
       "sed -i 's/hello/howdy/' src/greet/__init__.py"
       "howdy attrs=25.3.0 docopt=0.6.2 yaml=6.0.3";
+
+  # `nix build --rebuild` of this check, in CI, builds the sdist and wheel a
+  # second time and compares them.
+  conformance-rebuild = project.packages.greet;
+
+  conformance-external =
+    imports "external" external.environment "import idna; print(idna.__version__)"
+      "3.10";
 
   sources =
     runs "sources" sources.programs.sources
@@ -207,7 +248,7 @@ in
       "import six, packaging; print(six.__version__, packaging.__version__)"
       "1.17.0 25.0";
 
-  script = script.check;
+  script = script.tests;
 
   inherit shims;
 
@@ -231,18 +272,18 @@ in
         touch $out
       '';
 
-  inherit (import ./negative.nix { inherit pkgs buildPipProject; })
-    evaluation
-    missing-entry
-    ;
-
   hashed = imports "hashed" hashed.environment "import idna; print(idna.__version__)" "3.10";
 
   cli = runCommand "pip-purifier-test-cli" { } ''
     ${lib.getExe cli} --help
     ${lib.getExe cli} lock --help
-    ${lib.getExe cli} install --help
+    ${lib.getExe cli} prefetch --help
+    ${lib.getExe cli} pip --help > /dev/null
     ${lib.getExe cli} publish --help
     touch $out
   '';
+}
+// import ./conformance.nix {
+  inherit pkgs;
+  buildPipProject = build;
 }

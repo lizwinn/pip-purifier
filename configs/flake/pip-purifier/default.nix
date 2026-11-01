@@ -19,7 +19,8 @@
     # The packages are the `default` entry of this flake's package overlay
     # registry (pkg-overlays/): the package set applies it by default, and
     # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`.
+    # `overlays.default`. The builder is in the library
+    # (`lib.pip-purifier`, lib-overlays/).
     nixpkgs = {
       packages.export.enabled = true;
     };
@@ -60,7 +61,7 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
-              overlay = self.overlays.default;
+              inherit (self.lib.pip-purifier) buildPipProject;
               inherit (self.packages.${system}) cli;
             };
             treefmt.programs.nixfmt.enable = true;

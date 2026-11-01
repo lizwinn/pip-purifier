@@ -9,9 +9,9 @@
 #      click's test suite as the checkPhase;
 #   2. a relock reproduces the lockfile byte for byte, and how long a lock
 #      takes;
-#   3. the everyday loop offline: install into .venv, run the tests, check
+#   3. the everyday loop offline: prefetch into .venv, run the tests, check
 #      that pyright resolves every import from that .venv;
-#   4. adding a requirement: install refuses the stale lock with a message
+#   4. adding a requirement: prefetch refuses the stale lock with a message
 #      that says to relock, and works after the relock.
 set -euo pipefail
 
@@ -49,24 +49,27 @@ cat > flake.nix <<EOF
   outputs = { nixpkgs, pip-purifier, ... }:
     let
       system = builtins.currentSystem or "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; overlays = [ pip-purifier.overlays.default ]; };
-      project = pkgs.buildPipProject { src = ./.; checkPhase = "pytest -q tests"; };
+      project = pip-purifier.lib.pip-purifier.buildPipProject {
+        pkgs = nixpkgs.legacyPackages.\${system};
+        src = ./.;
+        checkPhase = "pytest -q tests";
+      };
     in {
       packages.\${system} = {
         default = project.environment;
-        check = project.check;
-        dist = project.packages.click;
+        tests = project.tests;
+        release = project.release;
       };
     };
 }
 EOF
 system=$(nix eval --impure --raw --expr builtins.currentSystem)
 sed -i "s/builtins.currentSystem or \"x86_64-linux\"/\"$system\"/" flake.nix
-nix build --no-link -L 'path:.#check'
-nix build --no-link 'path:.#dist'
+nix build --no-link -L 'path:.#tests'
+nix build --no-link 'path:.#release'
 
 echo "== the everyday loop offline" >&2
-"$cli" install
+"$cli" prefetch
 .venv/bin/pytest -q tests
 nix run 'nixpkgs#pyright' -- --pythonpath .venv/bin/python --outputjson src/click > "$work/pyright.json" || true
 # reportMissingModuleSource means pyright has stubs but the package is not
@@ -80,11 +83,11 @@ echo "pyright found $missing imports with neither a package nor stubs" >&2
 
 echo "== adding a requirement" >&2
 echo "rich==13.9.4" >> requirements/tests.txt
-if "$cli" install 2> "$work/stale.txt"; then
-  echo "install accepted a stale lock" >&2
+if "$cli" prefetch 2> "$work/stale.txt"; then
+  echo "prefetch accepted a stale lock" >&2
   exit 1
 fi
 grep -q 'Run `pip-purifier lock`' "$work/stale.txt"
 lock
-"$cli" install
+"$cli" prefetch
 .venv/bin/python -c 'import importlib.metadata, rich; print("rich", importlib.metadata.version("rich"))'

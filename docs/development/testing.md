@@ -2,14 +2,30 @@
 
 - `nix flake check -L` builds every fixture in `tests/fixtures/` offline in
   the sandbox (`tests/default.nix`), runs its programs, checks the package
-  files, runs `pip-purifier install` against prebuilt inputs, and checks the
-  formatting.
+  files and the release, and runs the unit tests (`tests/unit`) and the
+  formatting check. It holds the conformance checks of the purifier
+  contract that the sandbox can run: `conformance-stale`,
+  `conformance-tampered`, `conformance-missing` and `conformance-malformed`
+  (`tests/conformance.nix`), `conformance-offline` (`pip-purifier prefetch`
+  against prebuilt inputs, then the everyday loop), `conformance-external`
+  (a fixture built from a lockfile outside its source), and
+  `conformance-rebuild` (the sdist and wheel that CI builds twice).
 - `nix flake check --all-systems --no-build` evaluates the checks for
   x86_64-linux and aarch64-linux.
-- `tests/lock-run.sh` (needs jq) runs the lock against the network on a
-  copy of each fixture and compares the outputs, pins, arguments and inputs
-  with the committed lockfile.
-- `tests/interactive.sh` runs `install`, `pip`, `build` and
-  `publish --dry-run`, which build with Nix themselves.
+- `tests/lock-run.sh`, the CI job `conformance-relock`, runs the lock
+  against the network on a copy of each fixture, and on a lockfile kept
+  outside a fixture, and compares each result with the committed lockfile
+  byte for byte.
+- `tests/offline.sh`, the CI job `conformance-offline`, runs `prefetch`,
+  with the lockfile inside and outside the project, and
+  `publish --dry-run`. In CI it then collects garbage. With the network cut,
+  it runs the everyday loop and `pip-purifier pip`, which has to name
+  `pip-purifier lock` for a package the lockfile lacks.
+- `tests/update.sh`, the CI job `conformance-update`, updates a pinned
+  package and checks that `prefetch` accepts the new lockfile.
+- `tests/real-world.sh`, the CI job `real-world`, works through
+  pallets/click 8.1.8 at a pinned commit.
 - `tests/relock-fixtures.sh` rewrites the fixtures' lockfiles after a
   change to a fixture or to the lock format.
+
+CI runs every job on x86_64-linux and aarch64-linux.
