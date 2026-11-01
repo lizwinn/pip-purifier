@@ -130,12 +130,6 @@
       "hash": "sha256-fdew2IMro8tjLDBpJt7RI0KSEbg2QbNdxcQa0tNPm+w="
     },
     {
-      "path": "setuptools-69.0.3-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/55/3a/5121b58b578a598b269537e09a316ad2a94fdd561a2c6eb75cd68578cc6b/setuptools-69.0.3-py3-none-any.whl",
-      "mirrors": [],
-      "hash": "sha256-OF607dnJ1cF1QFETA+OaFHzi/AS8VSicMiueWQT+LAU="
-    },
-    {
       "path": "setuptools-84.2.1-py3-none-any.whl",
       "url": "https://files.pythonhosted.org/packages/ef/55/6dc6d6bb953bdfc52519a0059592c52b6e3b8ad51cf8256dffceb55b0610/setuptools-84.2.1-py3-none-any.whl",
       "mirrors": [],

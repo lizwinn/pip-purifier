@@ -1,72 +1,53 @@
 # SPDX-License-Identifier: MIT
 #
 # Common mistakes, each of which has to fail with an error that names the
-# problem and the command that fixes it. Evaluation errors are caught with
-# builtins.tryEval; a failure inside a build is caught with
-# testers.testBuildFailure, whose log the check reads.
+# problem and the command that fixes it. Each case builds the hashed fixture
+# with a changed lockfile, given as `lockData` so that evaluation reads no
+# generated file. Evaluation errors are caught with builtins.tryEval; a
+# failure inside a build is caught with testers.testBuildFailure, whose log
+# the check reads.
 {
   pkgs,
   buildPipProject,
 }:
 let
   inherit (pkgs) lib runCommand;
-  fixture = ./fixtures/hashed;
-  lockText = builtins.readFile (fixture + "/pip-purifier.lock.json");
-  lock = builtins.fromJSON lockText;
+  src = ./fixtures/hashed;
+  lock = builtins.fromJSON (builtins.readFile (src + "/pip-purifier.lock.json"));
 
-  # The fixture with its lockfile or requirements replaced.
-  withFiles =
-    name: files:
-    runCommand "pip-purifier-negative-${name}" { } ''
-      cp -r ${fixture} $out
-      chmod -R u+w $out
-      ${lib.concatStrings (
-        lib.mapAttrsToList (path: text: ''
-          cp ${pkgs.writeText "file" text} $out/${path}
-        '') files
-      )}
-    '';
+  withLock =
+    changes:
+    buildPipProject {
+      inherit src;
+      lockData = lock // changes;
+    };
 
   fails =
     name: value:
     let
       result = builtins.tryEval (builtins.seq value.drvPath true);
     in
-    assert lib.assertMsg (!result.success) "pip-purifier: the negative test ${name} evaluated, and it should not";
+    assert lib.assertMsg (
+      !result.success
+    ) "pip-purifier: the negative test ${name} evaluated, and it should not";
     true;
 
-  stale = buildPipProject {
-    src = withFiles "stale" {
-      "requirements.txt" = "idna==3.10\nsix==1.17.0\n";
-    };
-  };
+  # The requirements changed after the lock: their hash no longer matches.
+  stale = withLock { inputs = lib.mapAttrs (_: _: lib.fakeSha256) lock.inputs; };
   malformed = buildPipProject {
-    src = withFiles "malformed" {
-      "pip-purifier.lock.json" = builtins.toJSON (removeAttrs lock [ "artifacts" ]);
-    };
+    inherit src;
+    lockData = removeAttrs lock [ "artifacts" ];
   };
-  newerFormat = buildPipProject {
-    src = withFiles "newer-format" {
-      "pip-purifier.lock.json" = builtins.toJSON (lock // { version = 999; });
-    };
-  };
+  newerFormat = withLock { version = 999; };
+  otherSystem = withLock { systems = [ "riscv64-linux" ]; };
   otherPython = buildPipProject {
-    src = fixture;
+    inherit src;
     python = pkgs.python312;
-  };
-  otherSystem = buildPipProject {
-    src = withFiles "other-system" {
-      "pip-purifier.lock.json" = builtins.toJSON (lock // { systems = [ "riscv64-linux" ]; });
-    };
   };
 
   # A lockfile whose download of idna was removed: pip cannot find idna
   # offline, and the error names it.
-  missing = buildPipProject {
-    src = withFiles "missing" {
-      "pip-purifier.lock.json" = builtins.toJSON (lock // { artifacts = [ ]; });
-    };
-  };
+  missing = withLock { artifacts = [ ]; };
 in
 {
   evaluation =

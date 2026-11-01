@@ -35,6 +35,9 @@
   # The directory pip runs in, which holds the lockfile.
   src,
   lockFile ? src + "/pip-purifier.lock.json",
+  # The lockfile's contents, parsed, in place of reading `lockFile`; the
+  # negative tests give a changed lockfile this way.
+  lockData ? builtins.fromJSON (builtins.readFile lockFile),
   # The Python to install for. Its version must be the one the lock run
   # used.
   python ? python3,
@@ -56,10 +59,8 @@ let
   inherit (builtins)
     attrNames
     filter
-    fromJSON
     hashFile
     head
-    readFile
     sort
     stringLength
     substring
@@ -73,7 +74,7 @@ let
     ;
 
   supportedVersion = import ./lock-version.nix;
-  lock = fromJSON (readFile lockFile);
+  lock = lockData;
   system = stdenv.hostPlatform.system;
   arch = stdenv.hostPlatform.parsed.cpu.name;
 

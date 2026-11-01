@@ -250,7 +250,9 @@ in
       };
       wrong = lib.filterAttrs (name: expected: x86 name != expected) cases;
     in
-    assert lib.assertMsg (wrong == { }) "wheels.nix chose wrongly for ${toString (builtins.attrNames wrong)}";
+    assert lib.assertMsg (
+      wrong == { }
+    ) "wheels.nix chose wrongly for ${toString (builtins.attrNames wrong)}";
     runCommand "pip-purifier-test-wheels" { } "touch $out";
 
   inherit (import ./negative.nix { inherit pkgs buildPipProject; })

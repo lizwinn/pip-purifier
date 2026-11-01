@@ -48,6 +48,14 @@ Run the lock in the project directory, and commit the lockfile:
 nix run github:nix-purifiers/pip-purifier -- lock
 ```
 
+A relock keeps the files of the existing lockfile: for each package the
+lockfile already has, including the build requirements of sdists, the lock
+run offers pip only those files. An unchanged project relocks to the same
+file byte for byte, and adding a requirement leaves the other versions
+alone. `lock --upgrade` resolves everything afresh. When a changed
+requirement needs a version the lockfile does not have, the lock run says so
+and resolves afresh.
+
 To lock other arguments, give them after `--`:
 
 ```zsh
@@ -109,6 +117,23 @@ pip-purifier pip --python .venv/bin/python list
 ```
 
 Both refuse to run when the requirements have changed since the lock.
+
+## When something fails
+
+- **"does not match … any more. Run `pip-purifier lock`."** A requirements
+  file, pylock.toml, script or `pyproject.toml` changed after the lock.
+  Relock.
+- **"the lockfile has no file for <name> … run `pip-purifier lock`."** pip
+  needs a package the lock run did not see, for example after you added a
+  requirement and ran `pip-purifier pip install` before relocking.
+- **"hash mismatch in fixed-output derivation"** from Nix. A hash in
+  `pip-purifier.lock.json` was edited, or the server now serves different
+  bytes under the same URL. Relock, and check the change in review.
+- **"is not a pip-purifier lockfile"** or **"has lock format version …"**.
+  The lockfile is damaged, or comes from another version of pip-purifier.
+  Relock.
+- **"was made for Python …"**. Pass `buildPipProject` the `python` of the
+  version the lock names, or relock with `--python`.
 
 ## Publishing
 

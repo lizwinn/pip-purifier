@@ -139,6 +139,8 @@ class Proxy:
     def __init__(self):
         self.upstreams = []
         self.files = {}
+        # The locked files to list, by normalized project name, on a relock.
+        self.keep = {}
         self.lock = threading.Lock()
         self.errors = []
         proxy = self
@@ -217,6 +219,17 @@ class Proxy:
             new = self.file_link(target) + ("#" + fragment if fragment else "")
             return f"{match.group(1)}{html.escape(new)}{match.group(3)}"
 
+        # On a relock, a project the existing lockfile covers lists only its
+        # locked files.
+        project = normalize(path.strip("/").split("/")[0]) if path.strip("/") else None
+        if project in self.keep:
+            kept = self.keep[project]
+
+            def keep_anchor(match):
+                href = html.unescape(match.group(1)).partition("#")[0]
+                return match.group(0) if file_name(urllib.parse.urljoin(final, href)) in kept else ""
+
+            body = re.sub(r'<a\b[^>]*href="([^"]*)"[^>]*>.*?</a>', keep_anchor, body, flags=re.DOTALL | re.IGNORECASE)
         body = re.sub(r'(href=")([^"]*)(")', link, body)
         data = body.encode()
         request.send_response(200)
@@ -527,6 +540,25 @@ def pins_of(items, proxy):
     return sorted(set(pins))
 
 
+def previous_files(project):
+    """The files of the existing lockfile, by normalized project name, which
+    a relock keeps (Proxy.keep). Empty when there is no usable lockfile."""
+    try:
+        with open(os.path.join(project, LOCKFILE)) as f:
+            previous = json.load(f)
+        if previous.get("version") != FORMAT_VERSION:
+            return {}
+        artifacts = previous["artifacts"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    keep = {}
+    for artifact in artifacts:
+        found = dist_name_version(artifact["path"]) if "url" in artifact else None
+        if found:
+            keep.setdefault(found[0], set()).add(artifact["path"])
+    return keep
+
+
 def lock(ns):
     project = os.getcwd()
     args = ns.pip_args or default_args(project)
@@ -550,11 +582,20 @@ def lock(ns):
         venv = os.path.join(tmp, "venv")
         subprocess.run([python, "-m", "venv", "--without-pip", venv], check=True)
         report = os.path.join(tmp, "report.json")
-        run_pip(
-            ["--python", os.path.join(venv, "bin", "python"), "install", "--report", report, *lock_args],
-            env,
-            project,
-        )
+        install = ["--python", os.path.join(venv, "bin", "python"), "install", "--report", report, *lock_args]
+
+        # A relock keeps the files of the existing lockfile, for the
+        # requirements and for every build environment, unless --upgrade:
+        # the proxy lists only those files for a project they cover.
+        proxy.keep = {} if ns.upgrade else previous_files(project)
+        if proxy.keep and not run_pip(install, env, project, check=False):
+            log("the requirements need versions the existing lockfile does not have; resolving afresh")
+            proxy.keep = {}
+            proxy.files.clear()
+            shutil.rmtree(venv)
+            subprocess.run([python, "-m", "venv", "--without-pip", venv], check=True)
+        if not proxy.keep:
+            run_pip(install, env, project)
         items = report_items(report)
         pins = {here: pins_of(items, proxy)}
 
@@ -839,6 +880,7 @@ def main():
     p = commands.add_parser("lock", help="write pip-purifier.lock.json")
     p.add_argument("--python", help="the Python interpreter pip installs for (default: the Python of this package set)")
     p.add_argument("--system", action="append", choices=list(SYSTEMS), help="a Nix system to lock for (default: all)")
+    p.add_argument("--upgrade", action="store_true", help="resolve afresh instead of keeping the versions of the existing lockfile")
     p.add_argument("pip_args", nargs="*", metavar="-- PIP-ARG", help="the arguments of `pip install` (default: -r pylock.toml, -r requirements.txt, or .)")
     p.set_defaults(run=lock)
 

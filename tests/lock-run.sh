@@ -2,10 +2,8 @@
 # SPDX-License-Identifier: MIT
 #
 # Runs the lock against the network on a copy of each fixture, and checks
-# that the new lockfile names the same outputs and pins the same versions
-# as the committed one. The downloads may differ, because build
-# requirements such as setuptools are not pinned and move with new
-# releases.
+# that it reproduces the committed lockfile byte for byte: a relock keeps
+# the files of the existing lockfile, so an unchanged project locks the same.
 set -euo pipefail
 
 cli=$(nix build --no-link --print-out-paths '.#cli')/bin/pip-purifier
@@ -18,13 +16,11 @@ check() {
   echo "== $fixture" >&2
   cp -r "tests/fixtures/$fixture" "$work/$fixture"
   (cd "$work/$fixture" && "$cli" lock "$@")
-  for key in outputs pins args inputs; do
-    if ! diff <(jq -S ".$key" "tests/fixtures/$fixture/pip-purifier.lock.json") \
-      <(jq -S ".$key" "$work/$fixture/pip-purifier.lock.json"); then
-      echo "the lock run changed .$key of $fixture" >&2
-      exit 1
-    fi
-  done
+  if ! cmp "tests/fixtures/$fixture/pip-purifier.lock.json" "$work/$fixture/pip-purifier.lock.json"; then
+    diff "tests/fixtures/$fixture/pip-purifier.lock.json" "$work/$fixture/pip-purifier.lock.json" >&2 || true
+    echo "the lock run did not reproduce the lockfile of $fixture" >&2
+    exit 1
+  fi
 }
 
 check project
