@@ -15,13 +15,13 @@
   breezy,
   mitm-cache,
   openssl,
+  uv,
   path,
 }:
 let
   python = python3.withPackages (ps: [
     ps.pip
     ps.build
-    ps.twine
   ]);
 in
 stdenvNoCC.mkDerivation {
@@ -53,6 +53,7 @@ stdenvNoCC.mkDerivation {
           breezy
           mitm-cache
           openssl
+          uv
         ]
       } \
       --set PIP_PURIFIER_NIX_LIB $out/share/pip-purifier/nix-lib \

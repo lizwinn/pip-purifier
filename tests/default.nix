@@ -44,6 +44,89 @@ let
   # A requirements file with --hash pins, as pip-compile writes it.
   hashed = buildPipProject { src = ./fixtures/hashed; };
 
+  # A local package that names a Mercurial, a Subversion and a Bazaar
+  # repository as sources in its own metadata, installed offline with the
+  # shims answering pip's clones from locked checkouts. The checkouts are
+  # built here, and the setuptools wheel comes from the project fixture.
+  shimPackage =
+    name:
+    pkgs.writeTextDir "pyproject.toml" ''
+      [build-system]
+      requires = ["setuptools>=70"]
+      build-backend = "setuptools.build_meta"
+
+      [project]
+      name = "${name}"
+      version = "1.0"
+
+      [tool.setuptools]
+      py-modules = []
+    '';
+  shimInputs = runCommand "pip-purifier-test-shim-inputs" { } ''
+    mkdir -p $out/user
+    ln -s ${project.inputs}/wheelhouse $out/wheelhouse
+    cat > $out/user/pyproject.toml <<'EOF'
+    [build-system]
+    requires = ["setuptools>=70"]
+    build-backend = "setuptools.build_meta"
+
+    [project]
+    name = "shimuser"
+    version = "1.0"
+    dependencies = [
+      "shimhg @ hg+https://hg.example.invalid/shimhg@0123456789abcdef0123456789abcdef01234567",
+      "shimsvn @ svn+https://svn.example.invalid/shimsvn@7",
+      "shimbzr @ bzr+https://bzr.example.invalid/shimbzr@3",
+    ]
+
+    [tool.setuptools]
+    py-modules = []
+    EOF
+    echo '["./user"]' > $out/args.json
+    echo '{}' > $out/sources.json
+    echo '{}' > $out/versions.json
+    echo '[]' > $out/repositories.json
+    touch $out/pins.txt
+    cat > $out/shims.json <<'EOF'
+    [
+      {"vcs": "hg", "url": "https://hg.example.invalid/shimhg", "rev": "0123456789abcdef0123456789abcdef01234567", "version": "1.0", "path": "${shimPackage "shimhg"}"},
+      {"vcs": "svn", "url": "https://svn.example.invalid/shimsvn", "rev": "7", "version": "1.0", "path": "${shimPackage "shimsvn"}"},
+      {"vcs": "bzr", "url": "https://bzr.example.invalid/shimbzr", "rev": "3", "version": "1.0", "path": "${shimPackage "shimbzr"}"}
+    ]
+    EOF
+  '';
+  shims =
+    runCommand "pip-purifier-test-shims"
+      {
+        nativeBuildInputs = [
+          (pkgs.python3.withPackages (ps: [ ps.pip ]))
+          pkgs.git
+        ];
+      }
+      ''
+        export HOME=$TMPDIR
+        cp -r ${shimInputs}/user user
+        chmod -R u+w user
+        python -m venv --without-pip venv
+        python ${../nix/lib}/offline.py --project $PWD --inputs ${shimInputs} --venv venv --no-editable
+        # Each package is installed, and pip recorded the locked revision
+        # that the shim reported.
+        venv/bin/python - <<'EOF'
+        import importlib.metadata as m
+        import json
+
+        for name, rev in [
+            ("shimhg", "0123456789abcdef0123456789abcdef01234567"),
+            ("shimsvn", "7"),
+            ("shimbzr", "3"),
+        ]:
+            direct = json.loads(m.distribution(name).read_text("direct_url.json"))
+            print(name, m.version(name), direct["vcs_info"])
+            assert direct["vcs_info"]["commit_id"] == rev, direct
+        EOF
+        touch $out
+      '';
+
   # Runs a program and compares what it prints.
   runs =
     name: program: expected:
@@ -122,6 +205,8 @@ in
       "1.17.0 25.0";
 
   script = script.check;
+
+  inherit shims;
 
   hashed = imports "hashed" hashed.environment "import idna; print(idna.__version__)" "3.10";
 

@@ -17,6 +17,9 @@ this. `inputs` is the directory build-pip-project.nix makes as `inputs`:
                   locked version and a clone in the store
   replay/         the files of URLs that another package names as a source,
                   in the layout `mitm-cache replay` serves them from
+  shims.json      each Mercurial, Subversion or Bazaar repository that
+                  another package names as a source, with its locked
+                  checkout, for vcs_shim.py
 
 pip runs with --no-index and the wheelhouse as its only find-links, both on
 the command line and in the environment, so the isolated environments in
@@ -142,6 +145,26 @@ def serve_replays(inputs, tmp, env):
     return process
 
 
+def serve_shims(inputs, tmp, env):
+    """Puts hg, svn and bzr shims (vcs_shim.py) first on PATH when another
+    package names a Mercurial, Subversion or Bazaar repository as a source.
+    pip clones such a repository itself, and the shims answer from the
+    locked checkout."""
+    path = os.path.join(inputs, "shims.json")
+    if not os.path.exists(path) or not load(inputs, "shims.json"):
+        return
+    bin_dir = os.path.join(tmp, "vcs-shims")
+    os.makedirs(bin_dir)
+    shim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vcs_shim.py")
+    for vcs in ("hg", "svn", "bzr"):
+        script = os.path.join(bin_dir, vcs)
+        with open(script, "w") as f:
+            f.write(f'#!/bin/sh\nexec {sys.executable} {shim} {vcs} "$@"\n')
+        os.chmod(script, 0o755)
+    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+    env["PIP_PURIFIER_VCS_SHIMS"] = path
+
+
 def load(inputs, name):
     with open(os.path.join(inputs, name)) as f:
         return json.load(f)
@@ -196,6 +219,7 @@ def install(pip, project, inputs, venv, editable, extra=()):
         ]
         env = environment(inputs)
         serve_repositories(inputs, tmp, env)
+        serve_shims(inputs, tmp, env)
         replayer = serve_replays(inputs, tmp, env)
         print("pip-purifier: " + " ".join(command), file=sys.stderr)
         try:

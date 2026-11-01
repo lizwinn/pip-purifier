@@ -26,8 +26,12 @@ are. Without arguments, it uses `-r pylock.toml`, `-r requirements.txt` or
   it;
 - requirements from git, Mercurial, Subversion and Bazaar repositories, and
   from URLs of wheels and sdists;
-- a git repository that another package names as its source in its own
-  metadata;
+- a repository or URL that another package names as a source in its own
+  metadata. pip clones or downloads those itself, so the offline install
+  answers it: git through `url.<local clone>.insteadOf`, Mercurial,
+  Subversion and Bazaar through stand-in commands that copy the locked
+  checkout, and URLs through `mitm-cache replay`, an HTTPS proxy that
+  serves the locked files;
 - sdists, which pip builds with the build requirements the lock run
   recorded.
 
@@ -109,11 +113,12 @@ Both refuse to run when the requirements have changed since the lock.
 ## Publishing
 
 `pip-purifier publish` uploads the sdist and wheel that Nix built, with
-twine. The arguments after `--` go to `twine upload`, and `--dry-run` only
-runs `twine check`:
+`uv publish`, which accepts the metadata 2.5 that current build backends
+write. The arguments after `--` go to `uv publish`, and `--dry-run` checks
+the upload without making it:
 
 ```zsh
-pip-purifier publish -- --repository testpypi
+pip-purifier publish -- --publish-url https://test.pypi.org/legacy/
 ```
 
 ## Limits
@@ -121,15 +126,6 @@ pip-purifier publish -- --repository testpypi
 - **Systems.** A lock covers x86_64-linux and aarch64-linux.
 - **One Python version.** The wheels of a lock are those of the Python
   version the lock run used. A build with another version is refused.
-- **Other sources in package metadata.** A package that names a URL, or a
-  Mercurial, Subversion or Bazaar repository, as the source of one of its
-  own dependencies fails the lock run. pip downloads such a URL directly
-  over HTTPS, and clones such a repository with a tool that has no setting
-  to serve it from a local copy, so the build cannot answer either from the
-  lockfile. Naming that dependency in the requirements yourself works,
-  because pip-purifier then rewrites it to a local copy. PyPI refuses
-  uploads with such dependencies, so they only occur in packages from
-  repositories and local directories.
 - **Credentials.** The lockfile records URLs without their credentials. A
   private index needs a `fetchurl` that supplies them, such as nixpkgs'
   `fetchurl` with `netrcPhase`.

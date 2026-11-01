@@ -330,6 +330,17 @@ def prefetch(vcs, url, rev, submodules, leave_dot_git=False):
     return m.group(1)
 
 
+def hg_node(url, revision):
+    """The full node of a revision of a Mercurial repository (its tip when
+    no revision is given)."""
+    result = subprocess.run(
+        ["hg", "identify", "--debug", "--id", "--rev", revision or "tip", url], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        die(f"could not resolve {revision or 'tip'} of {url}:\n{result.stderr}")
+    return result.stdout.split()[0].rstrip("+")
+
+
 def checkout_artifact(vcs, url, rev, submodules, leave_dot_git=False):
     """A download entry of the shared purifier library for a checkout."""
     path = f"vcs/{re.sub(r'[^A-Za-z0-9._-]+', '-', url.rstrip('/').split('/')[-1])}-{rev[:12]}"
@@ -538,6 +549,10 @@ def lock(ns):
                 if item is None or "vcs_info" not in item["download_info"]:
                     die(f"pip did not report what it installed from {url}")
                 commit = item["download_info"]["vcs_info"]["commit_id"]
+                if vcs == "hg":
+                    # pip records Mercurial's local revision number. Lock the
+                    # node.
+                    commit = hg_node(repo, rev)
                 log(f"prefetching {vcs}+{repo}@{commit}")
                 entry = checkout_artifact(vcs, strip_credentials(repo), commit, submodules=True)
                 artifacts[entry["path"]] = entry
@@ -551,6 +566,7 @@ def lock(ns):
         wanted = {normalize(s["name"]) for s in rewriter.specs if s.get("name")}
         repositories = []
         replays = []
+        shims = []
         for item in items:
             info = item["download_info"]
             name = normalize(item["metadata"]["name"])
@@ -558,14 +574,23 @@ def lock(ns):
                 continue
             if "vcs_info" in info:
                 vcs_info = info["vcs_info"]
-                if vcs_info["vcs"] != "git":
-                    die(
-                        f"{item['metadata']['name']} comes from the {vcs_info['vcs']} repository {info['url']}, which "
-                        "another package names as its source. pip clones it with "
-                        f"{vcs_info['vcs']}, which has no setting that serves a repository from a local copy. "
-                        "Name it in the requirements yourself, so the build uses a local copy."
-                    )
                 commit = vcs_info["commit_id"]
+                if vcs_info["vcs"] == "hg":
+                    # pip records Mercurial's local revision number, which
+                    # only means something in one clone. Lock the node.
+                    commit = hg_node(info["url"], vcs_info.get("requested_revision"))
+                if vcs_info["vcs"] != "git":
+                    # pip clones it with hg, svn or bzr, which have no
+                    # setting that serves a repository from a local copy, so
+                    # the offline install answers with shims (vcs_shim.py)
+                    # from the locked checkout.
+                    log(f"prefetching the {vcs_info['vcs']} repository {info['url']}@{commit}")
+                    entry = checkout_artifact(vcs_info["vcs"], strip_credentials(info["url"]), commit, submodules=False)
+                    artifacts[entry["path"]] = entry
+                    shims.append(
+                        {"vcs": vcs_info["vcs"], "url": info["url"], "rev": commit, "version": item["metadata"]["version"], "path": entry["path"]}
+                    )
+                    continue
                 log(f"prefetching the repository {info['url']}@{commit}")
                 entry = checkout_artifact("git", strip_credentials(info["url"]), commit, submodules=True, leave_dot_git=True)
                 artifacts[entry["path"]] = entry
@@ -638,6 +663,7 @@ def lock(ns):
             "sources": dict(sorted(sources.items())),
             "repositories": sorted(repositories, key=lambda r: r["url"]),
             "replays": sorted(replays, key=lambda r: r["url"]),
+            "shims": sorted(shims, key=lambda r: r["url"]),
             "artifacts": sorted(artifacts.values(), key=lambda a: a["path"]),
         }
     path = os.path.join(project, LOCKFILE)
@@ -719,10 +745,9 @@ def publish(ns):
     files = sorted(os.path.join(out, n) for n in os.listdir(out))
     if not files:
         die(f"{out} holds no distributions")
-    if ns.dry_run:
-        subprocess.run([sys.executable, "-m", "twine", "check", *files], check=True)
-        return
-    os.execvp(sys.executable, [sys.executable, "-m", "twine", "upload", *ns.twine_args, *files])
+    # uv publish, because twine refuses the metadata 2.5 that current
+    # build backends write.
+    os.execvp("uv", ["uv", "publish", *(["--dry-run"] if ns.dry_run else []), *ns.uv_args, *files])
 
 
 def main():
@@ -752,10 +777,10 @@ def main():
     p.add_argument("output", help="environment, inputs, programs.<name> or packages.<name>")
     p.set_defaults(run=build)
 
-    p = commands.add_parser("publish", help="upload the sdist and wheel Nix built, with twine")
+    p = commands.add_parser("publish", help="upload the sdist and wheel Nix built, with `uv publish`")
     p.add_argument("--package", help="the local project to publish (default: the only one)")
-    p.add_argument("--dry-run", action="store_true", help="only run `twine check`")
-    p.add_argument("twine_args", nargs="*", metavar="-- TWINE-ARG")
+    p.add_argument("--dry-run", action="store_true", help="check the upload without making it")
+    p.add_argument("uv_args", nargs="*", metavar="-- UV-PUBLISH-ARG")
     p.set_defaults(run=publish)
 
     # Everything after `pip` goes to pip unparsed, options included.

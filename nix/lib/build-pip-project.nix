@@ -157,6 +157,10 @@ let
     checked.repositories or [ ]
   );
 
+  # Each Mercurial, Subversion or Bazaar repository that another package
+  # names as a source, with its locked checkout, for vcs_shim.py.
+  shims = map (shim: shim // { path = "${fetch byPath.${shim.path}}"; }) (checked.shims or [ ]);
+
   inputs = runCommand "pip-purifier-inputs" { } ''
     mkdir -p $out/wheelhouse
     ${concatMapStrings (
@@ -169,6 +173,7 @@ let
     '') (checked.replays or [ ])}
     cp ${writeText "sources.json" (toJSON sources)} $out/sources.json
     cp ${writeText "repositories.json" (toJSON repositories)} $out/repositories.json
+    cp ${writeText "shims.json" (toJSON shims)} $out/shims.json
     cp ${writeText "versions.json" (toJSON checked.versions)} $out/versions.json
     cp ${writeText "args.json" (toJSON checked.args)} $out/args.json
     cp ${writeText "pins.txt" (lib.concatLines checked.pins.${system})} $out/pins.txt
@@ -180,6 +185,7 @@ let
     fileset = lib.fileset.unions [
       ./offline.py
       ./pip_inputs.py
+      ./vcs_shim.py
     ];
   };
 
