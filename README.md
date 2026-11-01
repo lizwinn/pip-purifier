@@ -1,11 +1,11 @@
 # pip-purifier
 
-pip-purifier builds pip projects in the Nix sandbox. `pip-purifier lock`
-runs `pip install` once, through a recording package index on localhost,
-and writes `pip-purifier.lock.json`. The lockfile records every file pip
-downloaded, including what the isolated build environments of sdists
-downloaded, and every output the project makes. Nix then builds the project
-offline from it. You commit the lockfile, and Nix reads it directly.
+pip-purifier keeps pip's development workflow on locked,
+Nix-resolved dependencies. Use the normal build and test commands in your
+working tree; building the project itself in the Nix sandbox is an
+optional next step.
+
+It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
 Where a project has a `pylock.toml` or a requirements file with `--hash`
 pins, pip-purifier locks those versions. They also constrain the
@@ -16,45 +16,87 @@ names, with their URLs and hashes, from the `pylock.toml` itself.
 pip-purifier is part of [nix-purifiers](https://nix-purifiers.github.io),
 and meets the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
+## Installation
+
+Install the integration into your Nix profile once:
+
+```sh
+nix profile install 'github:nix-purifiers/pip-purifier'
+```
+
+This installs the purifier CLI. The workflow below prepares the native
+tool's cache, hook or environment; follow that activation step before using
+your usual commands. The ordinary tool itself remains your normal
+installation unless the setup explicitly supplies a toolchain.
+
+`nix shell` makes an integration available temporarily instead of installing
+it. Keep using the activation steps below where a project environment or
+prefetched cache is required.
+
 ## Quickstart
 
-Run the lock in the project directory, and commit the lockfile:
+Install Nix, then run the following from your existing project's root.
+The setup prepares the locked dependencies and the integration that
+pip's normal commands use:
 
 ```zsh
 nix run github:nix-purifiers/pip-purifier -- lock
+nix run github:nix-purifiers/pip-purifier -- prefetch
+.venv/bin/python -m pytest
 ```
 
-Without arguments, the lock runs `pip install -r pylock.toml`,
-`pip install -r requirements.txt` or `pip install .`, whichever the
-project has first. To lock other arguments, give them after `--`:
+Commit the lockfiles that the lock command writes, including the build
+tool's own lockfile when it has one. Keep using the project's usual build,
+test and editor commands with this setup. Nix provides the locked
+dependencies; the development commands above run outside the Nix sandbox.
+No project Nix files are needed for this workflow.
+
+Sandboxed builds of the whole project are an optional
+[next step](#building-the-project-with-nix).
+
+## Development loop
+
+pip has no plugin mechanism, so `pip-purifier` is a command of its own
+that runs pip. The development loop is the project's `.venv`, and
+`pip-purifier pip` runs pip against the locked files in place of a pip
+inside `.venv`.
+
+`pip-purifier prefetch` installs the project into `.venv` offline, with
+editable installs left editable. Then work in `.venv` as usual: an edit to
+the project's source shows in the next run without a reinstall.
 
 ```zsh
-nix run github:nix-purifiers/pip-purifier -- lock -- -r requirements/dev.txt -e .
+pip-purifier prefetch
+.venv/bin/pytest
 ```
 
-The flake's `overlays.default` adds the scope `pip-purifier` to a package set,
-which holds `buildPipProject` and the `pip-purifier` command. Build the
-installed environment from the project's directory, without adding a Nix
-file:
+`pip-purifier pip` runs any pip command offline against the locked files:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/pip-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.pip-purifier.buildPipProject { src = ./.; }).environment'
+pip-purifier pip --python .venv/bin/python list
 ```
 
-This uses the purifier's pinned nixpkgs, matching the lock command above.
-To build with ambient `<nixpkgs>` from your Nix search path instead,
-replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
-Both forms need no Nix files in your project. The build tool and language
-versions must match the lockfile; with ambient nixpkgs, lock with the
-purifier from that package set or pass a compatible toolchain to the builder.
+After a change to the requirements, `pip-purifier lock` relocks. A relock
+keeps the files of the existing lockfile: for each package that the
+lockfile has, including the build requirements of sdists, the lock run
+offers pip only those files. An unchanged project relocks to the same file
+byte for byte, and adding a requirement leaves the other versions alone.
+When a changed requirement needs a version that the lockfile lacks, the
+lock run says so and resolves afresh.
+
+`pip-purifier update` resolves every package afresh, and
+`pip-purifier update <package>...` resolves only the named ones, with the
+`pip install` arguments that the lockfile records. A `pylock.toml` pins
+every version itself, so to update such a project, run `pip lock`, then
+`pip-purifier lock`.
+
+## Building the project with Nix
+
+Once the native development workflow is working, you can also build and
+test the whole project in the Nix sandbox. For this step, keep a flake or
+another Nix build definition in the project's repository, or maintain an
+external packaging repository that points at its sources and lockfiles.
+The builder consumes the same lockfiles as the development workflow.
 
 A flake is optional. It can live in the project or in a separate
 packaging repository and call the builder directly:
@@ -122,41 +164,29 @@ We recommend committing `pip-purifier.lock.json` and `pylock.toml` to the
 repository of the project. The builder and the commands look for them
 there.
 
-## Development loop
+### One-off builds without a project Nix file
 
-pip has no plugin mechanism, so `pip-purifier` is a command of its own
-that runs pip. The development loop is the project's `.venv`, and
-`pip-purifier pip` runs pip against the locked files in place of a pip
-inside `.venv`.
-
-`pip-purifier prefetch` installs the project into `.venv` offline, with
-editable installs left editable. Then work in `.venv` as usual: an edit to
-the project's source shows in the next run without a reinstall.
+For an ad hoc build, the builder can also be evaluated directly from the
+project root. Replace the example package name with one from your project:
 
 ```zsh
-pip-purifier prefetch
-.venv/bin/pytest
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/pip-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.pip-purifier.buildPipProject { src = ./.; }).environment'
 ```
 
-`pip-purifier pip` runs any pip command offline against the locked files:
-
-```zsh
-pip-purifier pip --python .venv/bin/python list
-```
-
-After a change to the requirements, `pip-purifier lock` relocks. A relock
-keeps the files of the existing lockfile: for each package that the
-lockfile has, including the build requirements of sdists, the lock run
-offers pip only those files. An unchanged project relocks to the same file
-byte for byte, and adding a requirement leaves the other versions alone.
-When a changed requirement needs a version that the lockfile lacks, the
-lock run says so and resolves afresh.
-
-`pip-purifier update` resolves every package afresh, and
-`pip-purifier update <package>...` resolves only the named ones, with the
-`pip install` arguments that the lockfile records. A `pylock.toml` pins
-every version itself, so to update such a project, run `pip lock`, then
-`pip-purifier lock`.
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
 
 ## Working offline
 
@@ -246,6 +276,11 @@ credentials, so a private index needs a `fetchers.fetchurl` that supplies
 them, such as nixpkgs' `fetchurl` with `netrcPhase`.
 
 ## Examples
+
+For day-to-day work on these projects, use the native-tool setup and
+commands in [Quickstart](#quickstart) and [Development loop](#development-loop).
+The Nix expressions below show optional sandboxed packaging of those
+projects.
 
 [pallets/click](https://github.com/pallets/click) installs its test
 dependencies with `pip install -r requirements/tests.txt -e .`. In a clone
