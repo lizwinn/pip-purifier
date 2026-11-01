@@ -209,7 +209,7 @@ def load(inputs, name):
         return json.load(f)
 
 
-def install(pip, project, inputs, venv, editable, extra=()):
+def install(pip, project, inputs, venv, editable, extra=(), pylock=None):
     """Installs the project's inputs into the virtual environment `venv`
     with `pip`, a command that runs pip. `editable` keeps editable installs
     editable; the Nix build turns them into plain installs."""
@@ -236,7 +236,7 @@ def install(pip, project, inputs, venv, editable, extra=()):
                 tag(copy, versions[url])
             return copy
 
-        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "offline", local=local, editable=editable)
+        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "offline", local=local, editable=editable, pylock=pylock)
         rewritten = rewriter.args(args)
         if not editable:
             for rel in rewriter.dirs:

@@ -142,6 +142,17 @@ class Lockfiles(unittest.TestCase):
         outside = self.write(text, os.path.join(self.tmp.name, "elsewhere.json"))
         self.assertEqual(pp.read_lock(self.project, outside), self.lock)
 
+    def test_reads_a_pylock_kept_outside_the_project(self):
+        # The lockfile names pylock.toml, which only the outside copy holds.
+        outside = os.path.join(self.tmp.name, "pylock.toml")
+        with open(outside, "w") as f:
+            f.write('lock-version = "1.0"\n')
+        lock = dict(self.lock, inputs=pp.hash_inputs(self.project, ["pylock.toml"], outside))
+        lock["hash"] = pp.lock_hash(lock)
+        path = self.write(json.dumps(lock))
+        self.assertEqual(pp.read_lock(self.project, path, outside), lock)
+        self.fails(path, "does not match the project's requirements any more")
+
     def test_missing(self):
         self.fails(os.path.join(self.project, pp.LOCKFILE), "does not exist")
 

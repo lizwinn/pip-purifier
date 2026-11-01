@@ -1,0 +1,4 @@
+# An out-of-date pylock.toml, which an external build replaces with the
+# copy that the flake keeps outside the project (tests/default.nix).
+lock-version = "1.0"
+created-by = "pip"

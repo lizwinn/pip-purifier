@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: MIT
 #
-# The default package overlay. It adds the packages of pkgs/ under
-# `pkgs.pip-purifier` (`.cli`), and the builder `pkgs.buildPipProject`
-# (nix/lib/build-pip-project.nix) beside them, where nixpkgs keeps its own
-# builders, so a package written for callPackage takes it by name. The
-# builder gets the `purifier` library of this flake's closure and
-# `readLock` of its own library. A consumer that lists this flake in
-# `projects` holds it as `pip-purifier/default`, which its package sets
-# apply by default; the flake also exports it as `overlays.default`.
+# The default package overlay. It adds one attribute to the package set,
+# the scope `pkgs.pip-purifier`, which holds the packages of pkgs/ (`.cli`)
+# and the builder `buildPipProject` (nix/lib/build-pip-project.nix). The
+# builder is a package of the scope for callPackage, and gets the
+# `purifier` library of this flake's closure and `readLock` of its own
+# library. `pip-purifier.overrideScope` replaces what the scope shares,
+# and `buildPipProject.override` replaces what the builder takes. A
+# consumer that lists this flake in `projects` holds the overlay as
+# `pip-purifier/default`, which its package sets apply by default; the
+# flake also exports it as `overlays.default`.
 { closure-lib, ... }:
 let
   packages = closure-lib.caisson.nixpkgs.mkPackagesOverlay ../../pkgs "pip-purifier";
@@ -15,11 +17,18 @@ in
 {
   overlay =
     final: prev:
-    packages final prev
+    let
+      added = packages final prev;
+    in
+    added
     // {
-      buildPipProject = final.callPackage ../../nix/lib/build-pip-project.nix {
-        inherit (closure-lib) purifier;
-        inherit (closure-lib.pip-purifier) readLock;
-      };
+      pip-purifier = added.pip-purifier.overrideScope (
+        self: super: {
+          buildPipProject = self.callPackage ../../nix/lib/build-pip-project.nix {
+            inherit (closure-lib) purifier;
+            inherit (closure-lib.pip-purifier) readLock;
+          };
+        }
+      );
     };
 }

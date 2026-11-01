@@ -4,7 +4,8 @@
 # access is the fixed-output fetches of locked downloads.
 {
   pkgs,
-  # The flake's default package overlay, which adds buildPipProject.
+  # The default package overlay of the flake, which adds the scope
+  # pip-purifier with buildPipProject.
   overlay,
   cli,
 }:
@@ -12,8 +13,9 @@ let
   inherit (pkgs) lib runCommand;
 
   # Every fixture builds the way a consumer's package does: through
-  # buildPipProject of a package set that the overlay applies to.
-  build = (pkgs.extend overlay).buildPipProject;
+  # pip-purifier.buildPipProject of a package set that the overlay applies
+  # to.
+  build = (pkgs.extend overlay).pip-purifier.buildPipProject;
 
   # A local setuptools project installed with `-e .`, with a console
   # script, a wheel, an sdist-only dependency (docopt, built with the locked
@@ -191,6 +193,14 @@ let
     };
     lockFile = ./fixtures/hashed/pip-purifier.lock.json;
   };
+
+  # A tree whose pylock.toml is out of date, built with both lockfiles of
+  # the pylock fixture kept outside it.
+  externalPylock = build {
+    src = ./fixtures/stale-pylock;
+    lockFile = ./fixtures/pylock/pip-purifier.lock.json;
+    pylock = ./fixtures/pylock/pylock.toml;
+  };
 in
 {
   project = runs "project" project.programs.greet "hello attrs=25.3.0 docopt=0.6.2 yaml=6.0.3";
@@ -262,9 +272,13 @@ in
   # second time and compares them.
   conformance-rebuild = project.packages.greet;
 
-  conformance-external =
-    imports "external" external.environment "import idna; print(idna.__version__)"
-      "3.10";
+  conformance-external = pkgs.linkFarmFromDrvs "pip-purifier-conformance-external" [
+    (imports "external" external.environment "import idna; print(idna.__version__)" "3.10")
+    (imports "external-pylock" externalPylock.environment
+      "import six, packaging; print(six.__version__, packaging.__version__)"
+      "1.17.0 25.0"
+    )
+  ];
 
   sources =
     runs "sources" sources.programs.sources

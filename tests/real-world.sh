@@ -53,7 +53,7 @@ cat > flake.nix <<EOF
         inherit system;
         overlays = [ pip-purifier.overlays.default ];
       };
-      project = pkgs.buildPipProject {
+      project = pkgs.pip-purifier.buildPipProject {
         src = ./.;
         checkPhase = "pytest tests";
       };

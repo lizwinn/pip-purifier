@@ -16,12 +16,14 @@
       inherit (libOverlays) default;
     };
 
-    # The packages are the `default` entry of this flake's package overlay
-    # registry (pkg-overlays/): the package set applies it by default, and
-    # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`, which also adds the builder `buildPipProject`.
+    # The `pip-purifier` scope is the `default` entry of this flake's
+    # package overlay registry (pkg-overlays/): the package set applies it
+    # by default, and the flake exports it as `pkgOverlays` and as the
+    # plain `overlays.default`. The scope holds the builder
+    # `buildPipProject`, a function, so the flake's `packages` output is
+    # written below, as the derivations of the scope.
     nixpkgs = {
-      packages.export.enabled = true;
+      packages.export.enabled = false;
     };
   };
 
@@ -30,7 +32,9 @@
   perSystem =
     { config, pkgs, ... }:
     {
-      packages.default = config.packages.cli;
+      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.pip-purifier // {
+        default = config.packages.cli;
+      };
       devShells.default = pkgs.mkShell {
         packages = [ config.packages.cli ];
       };

@@ -7,10 +7,11 @@
 #
 # The file is a package for callPackage: the first argument set is what it
 # takes from the package set, and the result is the builder. The
-# pip-purifier overlay (`overlays.default`) adds it to the package set as
-# `buildPipProject`, so a package written for callPackage takes it like any
-# other dependency, and `buildPipProject.override` replaces what it takes
-# from the set. The builder returns
+# pip-purifier overlay (`overlays.default`) adds it to the scope
+# `pkgs.pip-purifier` as `buildPipProject`, so a package written for
+# callPackage takes `pip-purifier` and calls `pip-purifier.buildPipProject`.
+# `buildPipProject.override` replaces what it takes from the set. The
+# builder returns
 #
 #   (buildPipProject { src = ./.; }).packages.<name>
 #     the sdist and the wheel of each local project, with the file names
@@ -42,9 +43,15 @@
   writeText,
   symlinkJoin,
   python3,
-  # The package set, which the purifier library fetches with: its
-  # fetchers, and the tools that unpack archives and rebuild .git.
-  pkgs,
+  # The fetchers of the locked downloads, and the tools that unpack
+  # archives and rebuild .git, for the purifier library's fetchEntry.
+  fetchurl,
+  fetchgit,
+  fetchhg,
+  fetchsvn,
+  fetchbzr,
+  unzip,
+  zstd,
   # The library the nix-purifiers share (github:nix-purifiers/purifier),
   # which the overlay passes.
   purifier,
@@ -60,6 +67,9 @@
   fetchers ? { },
   # The lockfile, which may lie outside `src`.
   lockFile ? src + "/pip-purifier.lock.json",
+  # pip's own lockfile (PEP 751), for a project that installs from
+  # `pylock.toml`. A copy outside `src` takes the place of the one in `src`.
+  pylock ? src + "/pylock.toml",
   # The lockfile's contents, parsed, in place of reading `lockFile`; the
   # conformance checks give a changed lockfile this way.
   lockData ? null,
@@ -100,8 +110,12 @@ let
       lockFile
       lockData
       pathSources
+      pylock
       ;
   };
+  # A pylock.toml given from outside `src`, which the builds put in place
+  # of the copy in `src`.
+  outsidePylock = toString pylock != toString (src + "/pylock.toml");
   lock = purifier.checkLock read;
   file = toString lockFile;
   checked = builtins.seq lock (
@@ -114,7 +128,18 @@ let
   );
 
   fetchArgs = {
-    inherit pkgs;
+    inherit
+      fetchurl
+      fetchgit
+      fetchhg
+      fetchsvn
+      fetchbzr
+      runCommand
+      unzip
+      zstd
+      python3
+      writeText
+      ;
   }
   // fetchers;
   fetch = purifier.fetchEntry fetchArgs;
@@ -221,6 +246,7 @@ let
       cp -r ${pathSources.${key}} $work/${key}
     '') (attrNames pathSources)}
     chmod -R u+w $TMPDIR/work
+    ${lib.optionalString outsidePylock "cp ${pylock} $work/pylock.toml"}
     cd $work
     export HOME=$TMPDIR
     # nixpkgs' Python setup hook puts the site-packages of each Python

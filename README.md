@@ -32,8 +32,8 @@ project has first. To lock other arguments, give them after `--`:
 nix run github:nix-purifiers/pip-purifier -- lock -- -r requirements/dev.txt -e .
 ```
 
-The flake's `overlays.default` adds `buildPipProject` to a package set,
-where nixpkgs keeps its own builders. Build the project with it:
+The flake's `overlays.default` adds the scope `pip-purifier` to a package set,
+which holds `buildPipProject` and the `pip-purifier` command. Build the project with it:
 
 ```nix
 {
@@ -46,7 +46,7 @@ where nixpkgs keeps its own builders. Build the project with it:
         system = "x86_64-linux";
         overlays = [ pip-purifier.overlays.default ];
       };
-      project = pkgs.buildPipProject { src = ./.; };
+      project = pkgs.pip-purifier.buildPipProject { src = ./.; };
     in
     {
       packages.x86_64-linux = {
@@ -59,13 +59,13 @@ where nixpkgs keeps its own builders. Build the project with it:
 }
 ```
 
-`buildPipProject` is a package for `callPackage`, so a package of your own
+The scope is a package set for `callPackage`, so a package of your own
 takes it by name:
 
 ```nix
 # package.nix
-{ buildPipProject }:
-(buildPipProject { src = ./.; }).packages.greet
+{ pip-purifier }:
+(pip-purifier.buildPipProject { src = ./.; }).packages.greet
 ```
 
 `buildPipProject` gives:
@@ -91,14 +91,21 @@ The lockfile names every output, so Nix knows them at evaluation time.
 - `fetchers`, nixpkgs fetchers to use in place of the defaults, such as a
   `fetchurl` that sends credentials;
 - `lockFile`, for a lockfile outside `src`;
+- `pylock`, for a `pylock.toml` outside `src`, which the build uses in place
+  of the one in `src`;
 - `python`, whose version has to be the one the lock was made with;
 - `nativeBuildInputs` and `buildInputs`, for native dependencies of sdists;
 - `pathSources`, for local projects outside `src`;
 - `checkPhase`.
 
 `buildPipProject.override` replaces the packages it takes from the package
-set. `lib.pip-purifier.readLock { src; }` reads the lockfile into the lock
-shape that every purifier gives.
+set, and `pip-purifier.overrideScope` replaces what everything in the scope
+shares. `lib.pip-purifier.readLock { src; }` reads both lockfiles into the
+lock shape that every purifier gives.
+
+We recommend committing `pip-purifier.lock.json` and `pylock.toml` to the
+repository of the project. The builder and the commands look for them
+there.
 
 ## Development loop
 
@@ -146,14 +153,21 @@ editor and `pip-purifier pip` work with the network cut off. Keep the
 command itself installed, for example in a dev shell, so that running it
 needs no download either.
 
-A project can keep its build outside its tree, such as in a packaging flake
-for a project whose author does not use pip-purifier. Give the lockfile's
-path to each command with `--lockfile`, or set `PIP_PURIFIER_LOCKFILE`, and
-pass the same path to `buildPipProject` as `lockFile`:
+A project can instead keep its build outside its tree, such as in a
+packaging flake for a project whose author does not use pip-purifier. Give
+the path of `pip-purifier.lock.json` to each command with `--lockfile`, or
+set `PIP_PURIFIER_LOCKFILE`, and pass the same path to `buildPipProject` as
+`lockFile`:
 
 ```zsh
 PIP_PURIFIER_LOCKFILE=../packaging/pip-purifier.lock.json pip-purifier lock
 ```
+
+The same goes for `pylock.toml`, through `--tool-lockfile` or
+`PIP_PURIFIER_TOOL_LOCKFILE`, and the `pylock` argument of
+`buildPipProject`. With either one, `lock` and `update` read the
+`pylock.toml` there, and when it does not exist yet, `lock` starts from a
+copy of the `pylock.toml` in the tree.
 
 ## Editor
 
@@ -242,7 +256,7 @@ the sandbox:
         system = "x86_64-linux";
         overlays = [ pip-purifier.overlays.default ];
       };
-      project = pkgs.buildPipProject {
+      project = pkgs.pip-purifier.buildPipProject {
         src = ./.;
         checkPhase = "pytest tests";
       };

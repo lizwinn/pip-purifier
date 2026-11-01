@@ -10,6 +10,9 @@
   nixpkgs,
   src,
   lockFile,
+  # A pylock.toml kept outside the project, as an absolute path, or "" for
+  # the project's own.
+  pylock,
   attr,
 }:
 let
@@ -49,12 +52,17 @@ let
   purifier = import ../purifier/nix/lib { inherit lib; };
 
   inherit (import ./read-lock.nix { inherit lib; }) readLock;
-  project = pkgs.callPackage ./build-pip-project.nix { inherit purifier readLock; } {
-    src = source root;
-    lockFile = lockPath;
-    lockData = lock;
-    inherit pathSources;
-  };
+  project = pkgs.callPackage ./build-pip-project.nix { inherit purifier readLock; } (
+    {
+      src = source root;
+      lockFile = lockPath;
+      lockData = lock;
+      inherit pathSources;
+    }
+    // lib.optionalAttrs (pylock != "") {
+      pylock = /. + pylock;
+    }
+  );
 in
 lib.attrByPath (lib.splitString "." attr) (throw "pip-purifier: the project has no output ${attr}")
   project

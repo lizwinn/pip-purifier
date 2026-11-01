@@ -202,10 +202,13 @@ class Rewriter:
       path that replaces a VCS or URL requirement, where kind is "vcs",
       "url" or "file" (a wheel or sdist URL inside a pylock.toml).
     editable: in offline mode, whether editable installs stay editable.
+    pylock: a pylock.toml kept outside the project, which is read in place
+      of the project's pylock.toml.
     """
 
-    def __init__(self, project, out, mode, index=None, local=None, editable=True):
+    def __init__(self, project, out, mode, index=None, local=None, editable=True, pylock=None):
         self.project = os.path.abspath(project)
+        self.pylock_path = pylock
         self.out = os.path.abspath(out)
         self.mode = mode
         self.index = index
@@ -389,7 +392,8 @@ class Rewriter:
         self.record_input(path)
         target = self.output_path(path)
         self.written[path] = target
-        with open(path, "rb") as f:
+        source = self.pylock_path if self.pylock_path and path == os.path.join(self.project, "pylock.toml") else path
+        with open(source, "rb") as f:
             data = tomllib.load(f)
         base = os.path.dirname(path)
         for package in data.get("packages", []):

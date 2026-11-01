@@ -469,7 +469,9 @@ def checkout_artifact(vcs, url, rev, submodules):
 # Inputs.
 
 
-def default_args(project):
+def default_args(project, pylock=None):
+    if pylock:
+        return ["-r", "pylock.toml"]
     for name in ("pylock.toml", "requirements.txt"):
         if os.path.exists(os.path.join(project, name)):
             return ["-r", name]
@@ -478,10 +480,18 @@ def default_args(project):
     die("found no pylock.toml, requirements.txt, pyproject.toml or setup.py; give the pip install arguments after `--`")
 
 
-def hash_inputs(project, inputs):
+def input_path(project, rel, pylock=None):
+    """The file that an input of the lockfile names: the project's file, or
+    a pylock.toml kept outside the project."""
+    if pylock and rel == "pylock.toml":
+        return pylock
+    return os.path.join(project, rel)
+
+
+def hash_inputs(project, inputs, pylock=None):
     out = {}
     for rel in sorted(inputs):
-        with open(os.path.join(project, rel), "rb") as f:
+        with open(input_path(project, rel, pylock), "rb") as f:
             out[rel] = hashlib.sha256(f.read()).hexdigest()
     return out
 
@@ -507,7 +517,14 @@ def lockfile_path(ns, project):
     return os.path.abspath(given) if given else os.path.join(project, LOCKFILE)
 
 
-def read_lock(project, path):
+def tool_lockfile_path(ns):
+    """A pylock.toml kept outside the project, from --tool-lockfile or
+    PIP_PURIFIER_TOOL_LOCKFILE, or None for the project's own."""
+    given = ns.tool_lockfile or os.environ.get("PIP_PURIFIER_TOOL_LOCKFILE")
+    return os.path.abspath(given) if given else None
+
+
+def read_lock(project, path, pylock=None):
     """The lockfile at `path`, for the project directory `project`, or an
     exit with what is wrong with it and the command that fixes it."""
     if not os.path.exists(path):
@@ -524,8 +541,8 @@ def read_lock(project, path):
         die(f"{path} has lock format version {lock['version']}; this pip-purifier reads version {FORMAT_VERSION}. Run `pip-purifier lock`.")
     if lock["hash"] != lock_hash(lock):
         die(f"{path} was changed after `pip-purifier lock` wrote it: its content does not match its hash. Run `pip-purifier lock`.")
-    gone = [rel for rel in lock["inputs"] if not os.path.exists(os.path.join(project, rel))]
-    if gone or hash_inputs(project, lock["inputs"]) != lock["inputs"]:
+    gone = [rel for rel in lock["inputs"] if not os.path.exists(input_path(project, rel, pylock))]
+    if gone or hash_inputs(project, lock["inputs"], pylock) != lock["inputs"]:
         die(f"{path} does not match the project's requirements any more. Run `pip-purifier lock`.")
     return lock
 
@@ -612,7 +629,16 @@ def previous_files(path):
 def lock(ns):
     project = os.getcwd()
     lockfile = lockfile_path(ns, project)
-    args = ns.pip_args or default_args(project)
+    # A pylock.toml kept outside the project starts as a copy of the
+    # project's own.
+    pylock = tool_lockfile_path(ns)
+    if pylock and not os.path.exists(pylock):
+        tree_copy = os.path.join(project, "pylock.toml")
+        if not os.path.exists(tree_copy):
+            die(f"neither {pylock} nor {tree_copy} exists. Run `pip lock` to write a pylock.toml.")
+        os.makedirs(os.path.dirname(pylock), exist_ok=True)
+        shutil.copyfile(tree_copy, pylock)
+    args = ns.pip_args or default_args(project, pylock)
     python = ns.python or PYTHON
     pyver = subprocess.run(
         [python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"], capture_output=True, text=True, check=True
@@ -624,7 +650,7 @@ def lock(ns):
 
     with tempfile.TemporaryDirectory() as tmp, Proxy() as proxy:
         env = lock_environment(tmp, proxy, index, extra, links)
-        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "lock", index=proxy.upstream)
+        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "lock", index=proxy.upstream, pylock=pylock)
         lock_args = rewriter.args(args)
         # A pylock.toml pins every version, and does not record the
         # requirements `pip lock` resolved it from.
@@ -841,7 +867,7 @@ def lock(ns):
             "pip": pip_version,
             "python": pyver,
             "args": args,
-            "inputs": hash_inputs(project, rewriter.inputs),
+            "inputs": hash_inputs(project, rewriter.inputs, pylock),
             "pins": pins,
             "versions": dict(sorted(versions.items())),
             "outputs": {"programs": programs, "packages": packages},
@@ -875,10 +901,10 @@ def update(ns):
 # Nix.
 
 
-def nix_build(project, lockfile, attr, out_link=None):
+def nix_build(project, lockfile, attr, out_link=None, pylock=None):
     """Builds the output `attr` of buildPipProject (nix/lib/cli.nix) for the
     project, after checking its lockfile."""
-    read_lock(project, lockfile)
+    read_lock(project, lockfile, pylock)
     command = [
         "nix-build",
         os.path.join(NIX_LIB, "cli.nix"),
@@ -891,6 +917,9 @@ def nix_build(project, lockfile, attr, out_link=None):
         "--argstr",
         "lockFile",
         lockfile,
+        "--argstr",
+        "pylock",
+        pylock or "",
         "--argstr",
         "attr",
         attr,
@@ -912,10 +941,10 @@ def roots(lockfile):
     return root
 
 
-def inputs_of(project, lockfile):
+def inputs_of(project, lockfile, pylock=None):
     """The project's offline inputs, kept alive by a garbage-collector root
     under .pip-purifier/."""
-    return nix_build(project, lockfile, "inputs", out_link=os.path.join(roots(lockfile), "inputs"))
+    return nix_build(project, lockfile, "inputs", out_link=os.path.join(roots(lockfile), "inputs"), pylock=pylock)
 
 
 def prefetch_command(ns):
@@ -925,10 +954,11 @@ def prefetch_command(ns):
     purifier library, each kept alive by a root under .pip-purifier/."""
     project = os.getcwd()
     lockfile = lockfile_path(ns, project)
+    pylock = tool_lockfile_path(ns)
     if ns.inputs:
         inputs = ns.inputs
     else:
-        inputs = inputs_of(project, lockfile)
+        inputs = inputs_of(project, lockfile, pylock)
         # This command's package holds the Python of the virtual
         # environment, the pip that installs offline, and the nixpkgs and
         # purifier library that `pip` builds the inputs with.
@@ -941,12 +971,12 @@ def prefetch_command(ns):
     venv = os.path.abspath(ns.venv)
     if not os.path.exists(os.path.join(venv, "bin", "python")):
         subprocess.run([PYTHON, "-m", "venv", "--without-pip", venv], check=True)
-    offline.install(PIP, project, inputs, venv, editable=True, extra=ns.pip_args)
+    offline.install(PIP, project, inputs, venv, editable=True, extra=ns.pip_args, pylock=pylock)
 
 
 def pip(ns):
     project = os.getcwd()
-    inputs = inputs_of(project, lockfile_path(ns, project))
+    inputs = inputs_of(project, lockfile_path(ns, project), tool_lockfile_path(ns))
     env = offline.environment(inputs)
     env["PIP_CONSTRAINT"] = os.path.join(inputs, "pins.txt")
     offline.run_pip(PIP + ns.pip_args, project, env, stdout=True)
@@ -955,10 +985,11 @@ def pip(ns):
 def publish(ns):
     project = os.getcwd()
     lockfile = lockfile_path(ns, project)
-    packages = list(read_lock(project, lockfile)["outputs"]["packages"])
+    pylock = tool_lockfile_path(ns)
+    packages = list(read_lock(project, lockfile, pylock)["outputs"]["packages"])
     if ns.package and ns.package not in packages:
         die(f"the project has no package {ns.package}; its packages are: {', '.join(packages) or 'none'}")
-    out = nix_build(project, lockfile, f"packages.{ns.package}" if ns.package else "release")
+    out = nix_build(project, lockfile, f"packages.{ns.package}" if ns.package else "release", pylock=pylock)
     files = sorted(os.path.join(out, n) for n in os.listdir(out))
     if not files:
         die(f"{out} holds no distributions")
@@ -972,9 +1003,11 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
 
     lockfile_help = "the lockfile to write or read (default: pip-purifier.lock.json in the current directory)"
+    tool_lockfile_help = "a pylock.toml kept outside the project, read in place of pylock.toml in the project (default: PIP_PURIFIER_TOOL_LOCKFILE)"
 
     p = commands.add_parser("lock", help="write pip-purifier.lock.json")
     p.add_argument("--lockfile", help=lockfile_help)
+    p.add_argument("--tool-lockfile", help=tool_lockfile_help)
     p.add_argument("--python", help="the Python interpreter pip installs for (default: the Python of this package set)")
     p.add_argument("--system", action="append", choices=list(SYSTEMS), help="a Nix system to lock for (default: all)")
     p.add_argument("pip_args", nargs="*", metavar="-- PIP-ARG", help="the arguments of `pip install` (default: -r pylock.toml, -r requirements.txt, or .)")
@@ -985,6 +1018,7 @@ def main():
         help="resolve the named packages afresh, or every package, and write pip-purifier.lock.json",
     )
     p.add_argument("--lockfile", help=lockfile_help)
+    p.add_argument("--tool-lockfile", help=tool_lockfile_help)
     p.add_argument("--python", help="the Python interpreter pip installs for (default: the Python of this package set)")
     p.add_argument("--system", action="append", choices=list(SYSTEMS), help="a Nix system to lock for (default: all)")
     p.add_argument("update", nargs="*", metavar="PACKAGE", help="a package to update (default: every package)")
@@ -995,6 +1029,7 @@ def main():
         help="realize the locked downloads and this command with garbage-collector roots, and install into a virtual environment offline",
     )
     p.add_argument("--lockfile", help=lockfile_help)
+    p.add_argument("--tool-lockfile", help=tool_lockfile_help)
     p.add_argument("--venv", default=".venv")
     p.add_argument("--inputs", help="the inputs Nix built (default: build them with nix-build)")
     p.add_argument("pip_args", nargs="*", metavar="-- PIP-ARG", help="more arguments for `pip install`")
@@ -1005,11 +1040,13 @@ def main():
         help="run pip offline on the locked files; pass --python .venv/bin/python to act on a virtual environment",
     )
     p.add_argument("--lockfile", help=lockfile_help)
+    p.add_argument("--tool-lockfile", help=tool_lockfile_help)
     p.add_argument("pip_args", nargs=argparse.REMAINDER)
     p.set_defaults(run=pip)
 
     p = commands.add_parser("publish", help="upload the release Nix built, with `uv publish`")
     p.add_argument("--lockfile", help=lockfile_help)
+    p.add_argument("--tool-lockfile", help=tool_lockfile_help)
     p.add_argument("--package", help="publish only this local project (default: every one)")
     p.add_argument("--dry-run", action="store_true", help="check the upload without making it")
     p.add_argument("uv_args", nargs="*", metavar="-- UV-PUBLISH-ARG")
@@ -1019,12 +1056,18 @@ def main():
     # options included.
     if sys.argv[1:2] == ["pip"] and sys.argv[2:3] not in (["-h"], ["--help"]):
         rest = sys.argv[2:]
-        lockfile = None
-        if rest[:1] == ["--lockfile"] and len(rest) > 1:
-            lockfile, rest = rest[1], rest[2:]
-        elif rest[:1] and rest[0].startswith("--lockfile="):
-            lockfile, rest = rest[0].split("=", 1)[1], rest[1:]
-        pip(argparse.Namespace(lockfile=lockfile, pip_args=rest))
+        own = {"--lockfile": None, "--tool-lockfile": None}
+        while rest:
+            option, equals, value = rest[0].partition("=")
+            if option not in own:
+                break
+            if equals:
+                own[option], rest = value, rest[1:]
+            elif len(rest) > 1:
+                own[option], rest = rest[1], rest[2:]
+            else:
+                break
+        pip(argparse.Namespace(lockfile=own["--lockfile"], tool_lockfile=own["--tool-lockfile"], pip_args=rest))
         return
     ns = parser.parse_args()
     ns.run(ns)

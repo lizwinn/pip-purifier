@@ -156,6 +156,9 @@ in
       # Local projects outside `src` that the requirements name by a
       # relative path such as "../shared", each with its source.
       pathSources ? { },
+      # pip's own lockfile (PEP 751). A copy outside `src` takes the place
+      # of the one in `src`.
+      pylock ? src + "/pylock.toml",
     }:
     let
       exists = lockData != null || builtins.pathExists lockFile;
@@ -179,7 +182,9 @@ in
           );
           key = builtins.head keys;
         in
-        if keys == [ ] then
+        if rel == "pylock.toml" then
+          pylock
+        else if keys == [ ] then
           src + "/${rel}"
         else if rel == key then
           pathSources.${key}
