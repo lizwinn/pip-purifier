@@ -15,6 +15,8 @@ this. `inputs` is the directory build-pip-project.nix makes as `inputs`:
                   each git repository that another package names as a
                   source, with its URL, the revision pip asks for, the
                   locked version and a clone in the store
+  replay/         the files of URLs that another package names as a source,
+                  in the layout `mitm-cache replay` serves them from
 
 pip runs with --no-index and the wheelhouse as its only find-links, both on
 the command line and in the environment, so the isolated environments in
@@ -32,9 +34,11 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -100,6 +104,44 @@ def serve_repositories(inputs, tmp, env):
             env["GIT_CONFIG_COUNT"] = str(count + 1)
 
 
+def serve_replays(inputs, tmp, env):
+    """Starts `mitm-cache replay` on the locked files of URLs that another
+    package names as a source, when there are any, and points pip at it:
+    pip downloads such a URL itself, over HTTPS through `https_proxy`, and
+    trusts the proxy's certificate authority through PIP_CERT. Returns the
+    proxy process, or None."""
+    replay = os.path.join(inputs, "replay")
+    if not os.path.isdir(replay) or not os.listdir(replay):
+        return None
+    certs = os.path.join(tmp, "mitm-cache")
+    os.makedirs(certs)
+    subprocess.run(["openssl", "genrsa", "-out", "ca.key", "2048"], cwd=certs, check=True, capture_output=True)
+    subprocess.run(
+        ["openssl", "req", "-x509", "-new", "-nodes", "-key", "ca.key", "-sha256", "-days", "1", "-out", "ca.cer", "-subj", "/CN=pip-purifier"],
+        cwd=certs,
+        check=True,
+        capture_output=True,
+    )
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        address = f"127.0.0.1:{s.getsockname()[1]}"
+    process = subprocess.Popen(
+        ["mitm-cache", "-l", address, "replay", replay], cwd=certs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    host, port = address.split(":")
+    for _ in range(100):
+        try:
+            socket.create_connection((host, int(port)), timeout=0.1).close()
+            break
+        except OSError:
+            time.sleep(0.05)
+    ca = os.path.join(certs, "ca.cer")
+    for key in ("no_proxy", "NO_PROXY"):
+        env.pop(key, None)
+    env.update(http_proxy=address, https_proxy=address, HTTP_PROXY=address, HTTPS_PROXY=address, PIP_CERT=ca)
+    return process
+
+
 def load(inputs, name):
     with open(os.path.join(inputs, name)) as f:
         return json.load(f)
@@ -154,8 +196,14 @@ def install(pip, project, inputs, venv, editable, extra=()):
         ]
         env = environment(inputs)
         serve_repositories(inputs, tmp, env)
+        replayer = serve_replays(inputs, tmp, env)
         print("pip-purifier: " + " ".join(command), file=sys.stderr)
-        subprocess.run(command, cwd=project, env=env, check=True)
+        try:
+            subprocess.run(command, cwd=project, env=env, check=True)
+        finally:
+            if replayer:
+                replayer.terminate()
+                replayer.wait()
 
 
 def main():

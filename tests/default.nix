@@ -23,8 +23,9 @@ let
 
   # A git requirement whose version comes from git (attrs, with hatch-vcs),
   # a URL archive (six), a local directory and a nested requirements file.
-  # The local directory depends on a git repository through its own
-  # metadata (iniconfig, also versioned with hatch-vcs).
+  # The local directory depends on a git repository (iniconfig, also
+  # versioned with hatch-vcs) and on a URL (pyparsing) through its own
+  # metadata.
   sources = buildPipProject { src = ./fixtures/sources; };
 
   # A pylock.toml that `pip lock` wrote.
@@ -113,7 +114,7 @@ in
 
   sources =
     runs "sources" sources.programs.sources
-      "attrs=25.3.0 six=1.17.0 idna=3.10 iniconfig=2.1.0 localdir=0.3.0";
+      "attrs=25.3.0 six=1.17.0 idna=3.10 iniconfig=2.1.0 pyparsing=3.2.3 localdir=0.3.0";
 
   pylock =
     imports "pylock" pylock.environment

@@ -12,5 +12,5 @@ def main():
 
     print(
         f"attrs={attrs.__version__} six={six.__version__} idna={idna.__version__} "
-        f"iniconfig={version('iniconfig')} localdir={__version__}"
+        f"iniconfig={version('iniconfig')} pyparsing={version('pyparsing')} localdir={__version__}"
     )

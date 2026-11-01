@@ -9,7 +9,7 @@
   "inputs": {
     "more.txt": "6cd59269626891c6411956235f93f606a06395ed4a79073811f2e1c9be515c95",
     "requirements.txt": "46e1b9de7133678f24ba9de515e1c2918135c9f817b5987e0b1a2db99237d69a",
-    "vendor/localdir/pyproject.toml": "0f75e9377b041001ec0c10100df348e9efcb5637057f491924781424e108eb61"
+    "vendor/localdir/pyproject.toml": "4d8d4081a3501ddeafa02b1fd945ceab3659cc0f513bf112c9f59f3b1b956f3a"
   },
   "systems": [
     "x86_64-linux",
@@ -55,12 +55,30 @@
       "version": "2.1.0"
     }
   ],
+  "replays": [
+    {
+      "url": "https://github.com/pyparsing/pyparsing/archive/refs/tags/3.2.3.tar.gz",
+      "path": "3.2.3.tar.gz"
+    }
+  ],
   "artifacts": [
     {
       "path": "1.17.0.tar.gz",
       "url": "https://github.com/benjaminp/six/archive/refs/tags/1.17.0.tar.gz",
       "mirrors": [],
       "hash": "sha256-MvOujzmiP/lFjYTJDgDPBC5UMsy2HImRpeQ35+rNg8Y="
+    },
+    {
+      "path": "3.2.3.tar.gz",
+      "url": "https://github.com/pyparsing/pyparsing/archive/refs/tags/3.2.3.tar.gz",
+      "mirrors": [],
+      "hash": "sha256-OtM5c4XD9oyJ0xNSmvTK/JqRF4RbwMtrOPAuYh0VHTg="
+    },
+    {
+      "path": "flit_core-3.12.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/f2/65/b6ba90634c984a4fcc02c7e3afe523fef500c4980fec67cc27536ee50acf/flit_core-3.12.0-py3-none-any.whl",
+      "mirrors": [],
+      "hash": "sha256-56AwQGnqiVFy48e7cDKS6ZLF0VVd0SM6t7ViG1tp5iw="
     },
     {
       "path": "flit_core-4.2.0-py3-none-any.whl",

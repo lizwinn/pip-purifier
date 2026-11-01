@@ -47,6 +47,7 @@
   },
   "sources": {},
   "repositories": [],
+  "replays": [],
   "artifacts": [
     {
       "path": "attrs-25.3.0-py3-none-any.whl",

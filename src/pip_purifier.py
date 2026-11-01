@@ -550,6 +550,7 @@ def lock(ns):
         # holds the locked commit under the revision pip asks for.
         wanted = {normalize(s["name"]) for s in rewriter.specs if s.get("name")}
         repositories = []
+        replays = []
         for item in items:
             info = item["download_info"]
             name = normalize(item["metadata"]["name"])
@@ -571,12 +572,16 @@ def lock(ns):
                 repositories.append(
                     {"url": info["url"], "revision": vcs_info.get("requested_revision") or commit, "path": entry["path"], "version": item["metadata"]["version"]}
                 )
-            elif "archive_info" in info and not info["url"].startswith((proxy.base, "file:")):
-                die(
-                    f"{item['metadata']['name']} comes from {info['url']}, which another package names as its source. "
-                    "pip downloads such a URL directly over HTTPS, so no offline index can serve it. Name it in the "
-                    "requirements yourself, so the build uses a local copy."
-                )
+            elif "archive_info" in info and not info["url"].startswith((proxy.base, "file:")) and info["url"] not in sources:
+                # A URL that another package names as a source. pip
+                # downloads it itself, so the offline install answers the
+                # download from a replaying HTTPS proxy (mitm-cache).
+                url = info["url"]
+                with open_url(url) as response:
+                    digest = hashlib.sha256(response.read()).digest()
+                name = file_name(url)
+                artifacts[name] = {"path": name, "url": strip_credentials(url), "mirrors": [], "hash": sri(digest)}
+                replays.append({"url": strip_credentials(url), "path": name})
 
         # The other systems. pip resolves for each system's wheels; a project
         # that needs an sdist pip may not build for another platform keeps
@@ -632,6 +637,7 @@ def lock(ns):
             "outputs": {"programs": programs, "packages": packages},
             "sources": dict(sorted(sources.items())),
             "repositories": sorted(repositories, key=lambda r: r["url"]),
+            "replays": sorted(replays, key=lambda r: r["url"]),
             "artifacts": sorted(artifacts.values(), key=lambda a: a["path"]),
         }
     path = os.path.join(project, LOCKFILE)

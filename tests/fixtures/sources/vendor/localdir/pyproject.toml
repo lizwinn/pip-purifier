@@ -6,9 +6,13 @@ build-backend = "flit_core.buildapi"
 name = "localdir"
 version = "0.3.0"
 description = "A local directory requirement"
-# A git repository named in this package's own metadata, not in the
-# requirements. iniconfig takes its version from git (hatch-vcs).
-dependencies = ["iniconfig @ git+https://github.com/pytest-dev/iniconfig@v2.1.0"]
+# Sources named in this package's own metadata, not in the requirements: a
+# git repository (iniconfig, which takes its version from git with
+# hatch-vcs) and a GitHub archive URL (pyparsing).
+dependencies = [
+  "iniconfig @ git+https://github.com/pytest-dev/iniconfig@v2.1.0",
+  "pyparsing @ https://github.com/pyparsing/pyparsing/archive/refs/tags/3.2.3.tar.gz",
+]
 
 [project.scripts]
 sources = "localdir:main"

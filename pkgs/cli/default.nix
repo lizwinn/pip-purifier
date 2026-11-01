@@ -13,6 +13,8 @@
   mercurial,
   subversion,
   breezy,
+  mitm-cache,
+  openssl,
   path,
 }:
 let
@@ -49,6 +51,8 @@ stdenvNoCC.mkDerivation {
           mercurial
           subversion
           breezy
+          mitm-cache
+          openssl
         ]
       } \
       --set PIP_PURIFIER_NIX_LIB $out/share/pip-purifier/nix-lib \

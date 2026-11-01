@@ -24,6 +24,8 @@
   lib,
   stdenv,
   git,
+  mitm-cache,
+  openssl,
   python3,
   runCommand,
   writeText,
@@ -140,6 +142,15 @@ let
     if isFile entry then "wheelhouse/${fileName entry}" else "${fetch entry}"
   ) checked.sources;
 
+  # The path at which `mitm-cache replay` looks up a URL: "https/" or
+  # "http/", then the host and path, without the query.
+  replayPath =
+    url:
+    let
+      m = builtins.match "(https?)://([^?#]*).*" url;
+    in
+    "${builtins.elemAt m 0}/${builtins.elemAt m 1}";
+
   # Each git repository that another package names as a source, with a
   # clone of it in the store.
   repositories = map (repository: repository // { path = "${fetch byPath.${repository.path}}"; }) (
@@ -151,6 +162,11 @@ let
     ${concatMapStrings (
       entry: "ln -s ${fetch entry} $out/wheelhouse/${escapeShellArg (fileName entry)}\n"
     ) files}
+    mkdir -p $out/replay
+    ${concatMapStrings (replay: ''
+      mkdir -p "$(dirname $out/replay/${escapeShellArg (replayPath replay.url)})"
+      ln -s ${fetch byPath.${replay.path}} $out/replay/${escapeShellArg (replayPath replay.url)}
+    '') (checked.replays or [ ])}
     cp ${writeText "sources.json" (toJSON sources)} $out/sources.json
     cp ${writeText "repositories.json" (toJSON repositories)} $out/repositories.json
     cp ${writeText "versions.json" (toJSON checked.versions)} $out/versions.json
@@ -207,6 +223,8 @@ let
       nativeBuildInputs = [
         pip
         git
+        mitm-cache
+        openssl
       ]
       ++ nativeBuildInputs;
       inherit buildInputs;
