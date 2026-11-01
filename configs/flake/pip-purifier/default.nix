@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-{ ... }:
+{ closure-lib, ... }:
 {
   config,
   inputs,
@@ -8,23 +8,21 @@
 }:
 {
 
-  imports = [ inputs.flake-parts.flakeModules.partitions ];
+  imports = [
+    inputs.flake-parts.flakeModules.partitions
+    closure-lib.caisson.modules.flake."purifier/purifier-packages"
+  ];
 
   debug = false;
-  caisson = {
-    libOverlays.exported = libOverlays: {
-      inherit (libOverlays) default;
-    };
 
-    # The `pip-purifier` scope is the `default` entry of this flake's
-    # package overlay registry (pkg-overlays/): the package set applies it
-    # by default, and the flake exports it as `pkgOverlays` and as the
-    # plain `overlays.default`. The scope holds the builder
-    # `buildPipProject`, a function, so the flake's `packages` output is
-    # written below, as the derivations of the scope.
-    nixpkgs = {
-      packages.export.enabled = false;
-    };
+  # The flake's `packages` are the derivations of the `pip-purifier` scope,
+  # which is the `default` entry of the package overlay registry
+  # (pkg-overlays/). The flake also exports that overlay as `pkgOverlays`
+  # and as the plain `overlays.default`.
+  purifier.scope = "pip-purifier";
+
+  caisson.libOverlays.exported = libOverlays: {
+    inherit (libOverlays) default;
   };
 
   # `nix run github:nix-purifiers/pip-purifier -- lock` writes
@@ -32,9 +30,7 @@
   perSystem =
     { config, pkgs, ... }:
     {
-      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.pip-purifier // {
-        default = config.packages.cli;
-      };
+      packages.default = config.packages.cli;
       devShells.default = pkgs.mkShell {
         packages = [ config.packages.cli ];
       };
