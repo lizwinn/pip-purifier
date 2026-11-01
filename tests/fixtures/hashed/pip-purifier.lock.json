@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "pip": "26.1.2",
+  "python": "3.14",
+  "args": [
+    "-r",
+    "requirements.txt"
+  ],
+  "inputs": {
+    "requirements.txt": "e8d8bd5db88d920a25245d76234dfaaf26d78143a47c0476b4b40f5a07dfc709"
+  },
+  "systems": [
+    "x86_64-linux",
+    "aarch64-linux"
+  ],
+  "pins": {
+    "x86_64-linux": [
+      "idna==3.10"
+    ],
+    "aarch64-linux": [
+      "idna==3.10"
+    ]
+  },
+  "versions": {},
+  "outputs": {
+    "programs": [],
+    "packages": {}
+  },
+  "sources": {},
+  "repositories": [],
+  "artifacts": [
+    {
+      "path": "idna-3.10-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/76/c6/c88e154df9c4e1a2a66ccf0005a88dfb2650c1dffb6f5ce603dfbd452ce3/idna-3.10-py3-none-any.whl",
+      "mirrors": [],
+      "hash": "sha256-lG0ZWg0lnLumEWXojmWUHxbps26m3bl/AEUrrosSh9M="
+    }
+  ]
+}

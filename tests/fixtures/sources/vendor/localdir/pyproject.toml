@@ -1,0 +1,14 @@
+[build-system]
+requires = ["flit_core>=3.9"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "localdir"
+version = "0.3.0"
+description = "A local directory requirement"
+# A git repository named in this package's own metadata, not in the
+# requirements. iniconfig takes its version from git (hatch-vcs).
+dependencies = ["iniconfig @ git+https://github.com/pytest-dev/iniconfig@v2.1.0"]
+
+[project.scripts]
+sources = "localdir:main"

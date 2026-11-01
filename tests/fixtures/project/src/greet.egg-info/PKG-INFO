@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: greet
+Version: 0.1.0
+Requires-Dist: attrs==25.3.0
+Requires-Dist: docopt==0.6.2
+Requires-Dist: pyyaml==6.0.3

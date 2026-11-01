@@ -1,0 +1,6 @@
+# A git requirement whose version comes from git (hatch-vcs), a URL archive,
+# a local directory, and a nested requirements file.
+attrs @ git+https://github.com/python-attrs/attrs@25.3.0
+six @ https://github.com/benjaminp/six/archive/refs/tags/1.17.0.tar.gz
+./vendor/localdir
+-r more.txt

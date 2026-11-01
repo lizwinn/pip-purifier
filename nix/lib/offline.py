@@ -1,0 +1,185 @@
+# SPDX-License-Identifier: MIT
+"""Installs a project's locked inputs into a virtual environment offline.
+
+The Nix build (build-pip-project.nix) and `pip-purifier install` both run
+this. `inputs` is the directory build-pip-project.nix makes as `inputs`:
+
+  wheelhouse/     every locked wheel and sdist for this system
+  sources.json    each VCS or URL requirement, as written, to its local copy
+                  (a store path, or a path relative to `inputs`)
+  pins.txt        the versions the lock run resolved for this system
+  versions.json   the version of each package built from a checkout (by its
+                  requirement URL) or a local directory (by its path)
+  args.json       the pip install arguments the lock run recorded
+  repositories.json
+                  each git repository that another package names as a
+                  source, with its URL, the revision pip asks for, the
+                  locked version and a clone in the store
+
+pip runs with --no-index and the wheelhouse as its only find-links, both on
+the command line and in the environment, so the isolated environments in
+which it builds sdists read the same files.
+
+A checkout is copied to a writable directory, because pip builds a local
+directory in place. The copy, and in the Nix build every local directory
+without VCS metadata, becomes a git repository with one commit, tagged with
+the version the lock run saw. setuptools-scm and hatch-vcs then derive that
+version, as they did from the real repository.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import pip_inputs
+
+
+def environment(inputs):
+    """The environment variables of an offline pip run."""
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith("PIP_"):
+            del env[key]
+    env.update(
+        PIP_NO_INDEX="1",
+        PIP_FIND_LINKS=os.path.join(inputs, "wheelhouse"),
+        PIP_CONFIG_FILE=os.devnull,
+        PIP_DISABLE_PIP_VERSION_CHECK="1",
+        PIP_NO_INPUT="1",
+        PIP_PROGRESS_BAR="off",
+    )
+    return env
+
+
+def git(directory, *args):
+    subprocess.run(
+        ["git", "-c", "user.name=pip-purifier", "-c", "user.email=pip-purifier@localhost", "-c", "init.defaultBranch=main", *args],
+        cwd=directory,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        env=dict(os.environ, GIT_COMMITTER_DATE="1970-01-01T00:00:00Z", GIT_AUTHOR_DATE="1970-01-01T00:00:00Z"),
+    )
+
+
+def tag(directory, version):
+    """Makes `directory` a git repository whose one commit is tagged
+    `version`."""
+    git(directory, "init", "-q")
+    git(directory, "add", "-A", "-f")
+    git(directory, "commit", "-q", "--allow-empty", "-m", version)
+    git(directory, "tag", version)
+
+
+def serve_repositories(inputs, tmp, env):
+    """Points git at a local clone of each repository that another package
+    names as a source. Each clone is a writable copy of the store clone,
+    with the revision pip asks for as a tag on the locked commit, and the
+    version as a tag when the revision is a commit."""
+    for n, repository in enumerate(load(inputs, "repositories.json")):
+        copy = os.path.join(tmp, "repositories", str(n))
+        shutil.copytree(repository["path"], copy, symlinks=True)
+        subprocess.run(["chmod", "-R", "u+w", copy], check=True)
+        revision = repository["revision"]
+        names = [revision] if not re.fullmatch(r"[0-9a-f]{40}", revision) else [repository["version"]]
+        for name in names:
+            git(copy, "tag", "-f", name, "HEAD")
+        # The URL pip clones, with and without ".git": git applies the
+        # longest matching insteadOf, so each form maps to the clone.
+        base = repository["url"].removesuffix(".git")
+        for target in (base, base + ".git"):
+            count = int(env.get("GIT_CONFIG_COUNT", "0"))
+            env[f"GIT_CONFIG_KEY_{count}"] = f"url.file://{copy}.insteadOf"
+            env[f"GIT_CONFIG_VALUE_{count}"] = target
+            env["GIT_CONFIG_COUNT"] = str(count + 1)
+
+
+def load(inputs, name):
+    with open(os.path.join(inputs, name)) as f:
+        return json.load(f)
+
+
+def install(pip, project, inputs, venv, editable, extra=()):
+    """Installs the project's inputs into the virtual environment `venv`
+    with `pip`, a command that runs pip. `editable` keeps editable installs
+    editable; the Nix build turns them into plain installs."""
+    sources = load(inputs, "sources.json")
+    versions = load(inputs, "versions.json")
+    args = load(inputs, "args.json")
+    wheelhouse = os.path.join(inputs, "wheelhouse")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        copies = os.path.join(tmp, "checkouts")
+
+        def local(kind, url, name):
+            if kind == "file":
+                return os.path.join(wheelhouse, os.path.basename(pip_inputs.url_without_fragment(url)))
+            if url not in sources:
+                raise SystemExit(f"pip-purifier: the lockfile has no copy of {url}. Run `pip-purifier lock`.")
+            path = os.path.join(inputs, sources[url])
+            if not os.path.isdir(path):
+                return path
+            copy = os.path.join(copies, str(len(os.listdir(copies)) if os.path.isdir(copies) else 0))
+            shutil.copytree(path, copy, symlinks=True)
+            subprocess.run(["chmod", "-R", "u+w", copy], check=True)
+            if url in versions:
+                tag(copy, versions[url])
+            return copy
+
+        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "offline", local=local, editable=editable)
+        rewritten = rewriter.args(args)
+        if not editable:
+            for rel in rewriter.dirs:
+                directory = os.path.join(project, rel)
+                if rel in versions and not os.path.exists(os.path.join(directory, ".git")):
+                    tag(directory, versions[rel])
+
+        command = list(pip) + [
+            "--python",
+            os.path.join(venv, "bin", "python"),
+            "install",
+            "--no-index",
+            "--find-links",
+            wheelhouse,
+            "--constraint",
+            os.path.join(inputs, "pins.txt"),
+            *extra,
+            *rewritten,
+        ]
+        env = environment(inputs)
+        serve_repositories(inputs, tmp, env)
+        print("pip-purifier: " + " ".join(command), file=sys.stderr)
+        subprocess.run(command, cwd=project, env=env, check=True)
+
+
+def main():
+    if sys.argv[1:2] == ["tag"]:
+        # `offline.py tag DIRECTORY VERSION`, for builds that run pip
+        # themselves.
+        directory, version = sys.argv[2:4]
+        if not os.path.exists(os.path.join(directory, ".git")):
+            tag(directory, version)
+        return
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project", required=True)
+    parser.add_argument("--inputs", required=True)
+    parser.add_argument("--venv", required=True)
+    parser.add_argument("--no-editable", action="store_true")
+    ns = parser.parse_args()
+    install(
+        [sys.executable, "-m", "pip"],
+        os.path.abspath(ns.project),
+        ns.inputs,
+        os.path.abspath(ns.venv),
+        editable=not ns.no_editable,
+    )
+
+
+if __name__ == "__main__":
+    main()
