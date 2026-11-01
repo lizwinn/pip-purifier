@@ -155,6 +155,15 @@ pip-purifier publish -- --publish-url https://test.pypi.org/legacy/
   private index needs a `fetchurl` that supplies them, such as nixpkgs'
   `fetchurl` with `netrcPhase`.
 
+## Projects tried
+
+- [pallets/click](https://github.com/pallets/click) 8.1.8, commit
+  `934813e`, with `-r requirements/tests.txt -e .`: the lock run takes about
+  8 seconds and a relock reproduces the lockfile byte for byte, the test
+  suite passes in the Nix sandbox and in the offline `.venv`, and pyright
+  resolves the imports from that `.venv`. `tests/real-world.sh` runs this in
+  CI on both systems.
+
 ## Credit
 
 The purifier idea was inspired by nixcloud's

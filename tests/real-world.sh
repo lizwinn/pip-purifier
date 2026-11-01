@@ -69,8 +69,13 @@ echo "== the everyday loop offline" >&2
 "$cli" install
 .venv/bin/pytest -q tests
 nix run 'nixpkgs#pyright' -- --pythonpath .venv/bin/python --outputjson src/click > "$work/pyright.json" || true
-missing=$(nix run 'nixpkgs#jq' -- '[.generalDiagnostics[] | select(.rule == "reportMissingImports" or .rule == "reportMissingModuleSource")] | length' "$work/pyright.json")
-echo "pyright found $missing unresolved imports" >&2
+# reportMissingModuleSource means pyright has stubs but the package is not
+# installed, which is right for click's Windows-only colorama and its
+# type-checking-only typing_extensions (requirements/typing.txt). An import
+# the .venv should provide and does not is reportMissingImports.
+nix run 'nixpkgs#jq' -- -r '.generalDiagnostics[] | select(.rule == "reportMissingImports" or .rule == "reportMissingModuleSource") | "\(.rule) \(.file):\(.range.start.line + 1): \(.message)"' "$work/pyright.json" >&2
+missing=$(nix run 'nixpkgs#jq' -- '[.generalDiagnostics[] | select(.rule == "reportMissingImports")] | length' "$work/pyright.json")
+echo "pyright found $missing imports with neither a package nor stubs" >&2
 [ "$missing" = 0 ]
 
 echo "== adding a requirement" >&2
@@ -82,4 +87,4 @@ fi
 grep -q 'Run `pip-purifier lock`' "$work/stale.txt"
 lock
 "$cli" install
-.venv/bin/python -c 'import rich; print("rich", rich.__version__)'
+.venv/bin/python -c 'import importlib.metadata, rich; print("rich", importlib.metadata.version("rich"))'
