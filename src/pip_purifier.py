@@ -13,13 +13,17 @@ import argparse
 import base64
 import hashlib
 import html
+import http.client
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,6 +89,34 @@ def open_url(url, accept=None):
         token = f"{urllib.parse.unquote(parts.username)}:{urllib.parse.unquote(parts.password or '')}"
         headers["Authorization"] = "Basic " + base64.b64encode(token.encode()).decode()
     return urllib.request.urlopen(urllib.request.Request(strip_credentials(url), headers=headers))
+
+
+def download(url, out, accept=None, attempts=4):
+    """Downloads a URL completely into the file object `out`, retrying a
+    transfer that fails or ends early. Returns the final URL after
+    redirects. An HTTP error status is raised at once."""
+    for attempt in range(attempts):
+        out.seek(0)
+        out.truncate()
+        try:
+            with open_url(url, accept=accept) as response:
+                shutil.copyfileobj(response, out)
+                return response.geturl()
+        except urllib.error.HTTPError:
+            raise
+        except (OSError, http.client.HTTPException) as error:
+            if attempt == attempts - 1:
+                raise
+            log(f"retrying {strip_credentials(url)} after {error!r}")
+            time.sleep(2**attempt)
+
+
+def hash_url(url):
+    """The SHA-256 digest of the file at a URL."""
+    with tempfile.TemporaryFile() as data:
+        download(url, data)
+        data.seek(0)
+        return hashlib.file_digest(data, "sha256").digest()
 
 
 def file_name(url):
@@ -166,14 +198,13 @@ class Proxy:
 
     def page(self, request, upstream, path):
         url = urllib.parse.urljoin(upstream, path)
+        buffer = io.BytesIO()
         try:
-            response = open_url(url, accept="text/html")
+            final = download(url, buffer, accept="text/html")
         except urllib.error.HTTPError as error:
             request.send_error(error.code)
             return
-        with response:
-            final = response.geturl()
-            body = response.read().decode("utf-8", "replace")
+        body = buffer.getvalue().decode("utf-8", "replace")
         # Credentials of the upstream stay on links to the same host.
         up = urllib.parse.urlsplit(upstream)
 
@@ -195,32 +226,33 @@ class Proxy:
         request.wfile.write(data)
 
     def passthrough(self, request, url):
+        buffer = io.BytesIO()
         try:
-            response = open_url(url)
+            download(url, buffer)
         except urllib.error.HTTPError as error:
             request.send_error(error.code)
             return
-        with response:
-            data = response.read()
+        data = buffer.getvalue()
         request.send_response(200)
         request.send_header("Content-Length", str(len(data)))
         request.end_headers()
         request.wfile.write(data)
 
     def file(self, request, url):
-        try:
-            response = open_url(url)
-        except urllib.error.HTTPError as error:
-            request.send_error(error.code)
-            return
-        digest = hashlib.sha256()
-        with response:
+        # The whole file arrives first, so a failed transfer is retried
+        # before pip sees any of it.
+        with tempfile.TemporaryFile() as data:
+            try:
+                download(url, data)
+            except urllib.error.HTTPError as error:
+                request.send_error(error.code)
+                return
+            digest = hashlib.sha256()
             request.send_response(200)
-            length = response.headers.get("Content-Length")
-            if length:
-                request.send_header("Content-Length", length)
+            request.send_header("Content-Length", str(data.tell()))
             request.end_headers()
-            while chunk := response.read(1 << 16):
+            data.seek(0)
+            while chunk := data.read(1 << 16):
                 digest.update(chunk)
                 request.wfile.write(chunk)
         self.record(url, digest.digest())
@@ -335,9 +367,9 @@ def git_repository(url, commit, tmp):
     at `commit`, with its submodules, recursively.
 
     The entry's hash covers only the plain checkout, which is reproducible.
-    The raw commit object (`commitObject`, base64) lets the offline install
-    rebuild a shallow .git whose commit hashes to `commit`, and `gitlinks`
-    lists the submodule commits its tree points at."""
+    Its `commitObject` holds the raw commit object (`object`, base64) and the
+    submodule commits its tree points at (`gitlinks`), from which the offline
+    install rebuilds a shallow .git whose commit hashes to `commit`."""
     directory = tempfile.mkdtemp(dir=tmp)
 
     def git(*args):
@@ -369,9 +401,15 @@ def git_repository(url, commit, tmp):
     log(f"prefetching the repository {url}@{commit}")
     entry = checkout_artifact("git", strip_credentials(url), commit, submodules=False)
     entry["path"] += "-repository"
-    entry["git"].update(leaveDotGit=True, commitObject=base64.b64encode(raw).decode())
+    entry["git"].update(
+        leaveDotGit=True,
+        commitObject={
+            "object": base64.b64encode(raw).decode(),
+            "gitlinks": [{"path": link["path"], "rev": link["rev"]} for link in gitlinks],
+        },
+    )
     entries.append(entry)
-    served.append({"url": url, "path": entry["path"], "gitlinks": gitlinks})
+    served.append({"url": url, "path": entry["path"]})
     return entries, served
 
 
@@ -578,8 +616,7 @@ def lock(ns):
                 name = file_name(url)
                 artifacts[name] = {"path": name, "url": strip_credentials(url), "mirrors": [], "hash": sri(bytes.fromhex(sha))}
             elif spec["kind"] == "url":
-                with open_url(pip_inputs.url_without_fragment(url)) as response:
-                    digest = hashlib.sha256(response.read()).digest()
+                digest = hash_url(pip_inputs.url_without_fragment(url))
                 name = file_name(pip_inputs.url_without_fragment(url))
                 artifacts[name] = {"path": name, "url": strip_credentials(pip_inputs.url_without_fragment(url)), "mirrors": [], "hash": sri(digest)}
                 sources[url] = name
@@ -648,8 +685,7 @@ def lock(ns):
                 # downloads it itself, so the offline install answers the
                 # download from a replaying HTTPS proxy (mitm-cache).
                 url = info["url"]
-                with open_url(url) as response:
-                    digest = hashlib.sha256(response.read()).digest()
+                digest = hash_url(url)
                 name = file_name(url)
                 artifacts[name] = {"path": name, "url": strip_credentials(url), "mirrors": [], "hash": sri(digest)}
                 replays.append({"url": strip_credentials(url), "path": name})

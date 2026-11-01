@@ -51,7 +51,6 @@
     {
       "url": "https://github.com/pytest-dev/iniconfig",
       "path": "vcs/iniconfig-34793a6417e3-repository",
-      "gitlinks": [],
       "revision": "v2.1.0",
       "version": "2.1.0"
     }
@@ -131,6 +130,12 @@
       "hash": "sha256-fdew2IMro8tjLDBpJt7RI0KSEbg2QbNdxcQa0tNPm+w="
     },
     {
+      "path": "setuptools-69.0.3-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/55/3a/5121b58b578a598b269537e09a316ad2a94fdd561a2c6eb75cd68578cc6b/setuptools-69.0.3-py3-none-any.whl",
+      "mirrors": [],
+      "hash": "sha256-OF607dnJ1cF1QFETA+OaFHzi/AS8VSicMiueWQT+LAU="
+    },
+    {
       "path": "setuptools-84.2.1-py3-none-any.whl",
       "url": "https://files.pythonhosted.org/packages/ef/55/6dc6d6bb953bdfc52519a0059592c52b6e3b8ad51cf8256dffceb55b0610/setuptools-84.2.1-py3-none-any.whl",
       "mirrors": [],
@@ -172,7 +177,10 @@
         "rev": "34793a6417e35e511d0c17ffdd8a02ade0f9568e",
         "submodules": false,
         "leaveDotGit": true,
-        "commitObject": "dHJlZSAxYjI3YWNmY2UzZmQ0MTJkZjRiYjA4YTVkNGI5NDViMGU3OTkzYzNjCnBhcmVudCAxMzY0MzVkMGE0MzQ1YmIwNDhkY2E5OGU3YzJmNGU5MzhkNzQ1MjFiCmF1dGhvciBSb25ueSBQZmFubnNjaG1pZHQgPG9wZW5zb3VyY2VAcm9ubnlwZmFubnNjaG1pZHQuZGU+IDE3NDI0MDUzMDcgKzAxMDAKY29tbWl0dGVyIFJvbm55IFBmYW5uc2NobWlkdCA8b3BlbnNvdXJjZUByb25ueXBmYW5uc2NobWlkdC5kZT4gMTc0MjQwNTMwNyArMDEwMAoKcHJlLWNvbW1pdAo="
+        "commitObject": {
+          "object": "dHJlZSAxYjI3YWNmY2UzZmQ0MTJkZjRiYjA4YTVkNGI5NDViMGU3OTkzYzNjCnBhcmVudCAxMzY0MzVkMGE0MzQ1YmIwNDhkY2E5OGU3YzJmNGU5MzhkNzQ1MjFiCmF1dGhvciBSb25ueSBQZmFubnNjaG1pZHQgPG9wZW5zb3VyY2VAcm9ubnlwZmFubnNjaG1pZHQuZGU+IDE3NDI0MDUzMDcgKzAxMDAKY29tbWl0dGVyIFJvbm55IFBmYW5uc2NobWlkdCA8b3BlbnNvdXJjZUByb25ueXBmYW5uc2NobWlkdC5kZT4gMTc0MjQwNTMwNyArMDEwMAoKcHJlLWNvbW1pdAo=",
+          "gitlinks": []
+        }
       },
       "hash": "sha256-Aq7Llm7ZTxlis1/2QyXxQVMi2aKoE9kpEAwrOCzGMns="
     },

@@ -161,7 +161,9 @@ let
     repository
     // {
       path = "${fetch entry}";
-      inherit (entry.git) rev commitObject;
+      inherit (entry.git) rev;
+      commitObject = entry.git.commitObject.object;
+      inherit (entry.git.commitObject) gitlinks;
     }
   ) (checked.repositories or [ ]);
 

@@ -11,9 +11,11 @@
 #   { path, bzr = { url, rev }, hash }                            a Bazaar checkout
 #
 # A git checkout is always fetched without .git, so its hash is
-# reproducible. When `leaveDotGit` is true, `commitObject` holds the raw
-# commit object (base64), from which the offline install rebuilds a shallow
-# .git (nix/lib/offline.py, rebuild_git).
+# reproducible. When `leaveDotGit` is true, `commitObject` is
+# { object, gitlinks }: the raw commit object (base64) and the submodule
+# commits of its tree ([ { path, rev } ]), from which the offline install
+# rebuilds a shallow .git (nix/lib/offline.py, rebuild_git). Otherwise it is
+# null.
 #
 # A file comes from `fetchurl`, which tries `url` and then each mirror. A
 # consumer replaces `fetchurl` for credentials (nixpkgs' fetchurl takes
