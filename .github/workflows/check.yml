@@ -34,3 +34,5 @@ jobs:
         run: tests/lock-run.sh
       - name: Commands that build with Nix
         run: tests/interactive.sh
+      - name: A real project (pallets/click 8.1.8)
+        run: tests/real-world.sh
