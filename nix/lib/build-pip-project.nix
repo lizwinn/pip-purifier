@@ -153,9 +153,17 @@ let
 
   # Each git repository that another package names as a source, with a
   # clone of it in the store.
-  repositories = map (repository: repository // { path = "${fetch byPath.${repository.path}}"; }) (
-    checked.repositories or [ ]
-  );
+  repositories = map (
+    repository:
+    let
+      entry = byPath.${repository.path};
+    in
+    repository
+    // {
+      path = "${fetch entry}";
+      inherit (entry.git) rev commitObject;
+    }
+  ) (checked.repositories or [ ]);
 
   # Each Mercurial, Subversion or Bazaar repository that another package
   # names as a source, with its locked checkout, for vcs_shim.py.

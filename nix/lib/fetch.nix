@@ -4,10 +4,16 @@
 # entry in the shape of the shared purifier library:
 #
 #   { path, url, mirrors, hash }                                  a file
-#   { path, git = { url, rev, submodules, leaveDotGit }, hash }   a git checkout
+#   { path, git = { url, rev, submodules, leaveDotGit, commitObject }, hash }
+#                                                                 a git checkout
 #   { path, hg = { url, rev }, hash }                             a Mercurial checkout
 #   { path, svn = { url, rev }, hash }                            a Subversion checkout
 #   { path, bzr = { url, rev }, hash }                            a Bazaar checkout
+#
+# A git checkout is always fetched without .git, so its hash is
+# reproducible. When `leaveDotGit` is true, `commitObject` holds the raw
+# commit object (base64), from which the offline install rebuilds a shallow
+# .git (nix/lib/offline.py, rebuild_git).
 #
 # A file comes from `fetchurl`, which tries `url` and then each mirror. A
 # consumer replaces `fetchurl` for credentials (nixpkgs' fetchurl takes
@@ -40,7 +46,7 @@ if entry ? url then
   }
 else if entry ? git then
   fetchgit {
-    inherit (entry.git) url rev leaveDotGit;
+    inherit (entry.git) url rev;
     fetchSubmodules = entry.git.submodules;
     inherit (entry) hash;
   }

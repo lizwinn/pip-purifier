@@ -309,12 +309,12 @@ def current_system():
 # VCS checkouts.
 
 
-def prefetch(vcs, url, rev, submodules, leave_dot_git=False):
-    """The SRI NAR hash of a checkout, as the nixpkgs fetcher of `vcs`
-    computes it."""
-    flag = lambda b: "true" if b else "false"  # noqa: E731
+def prefetch(vcs, url, rev, submodules):
+    """The SRI NAR hash of a checkout without VCS metadata, as the nixpkgs
+    fetcher of `vcs` computes it."""
+    flag = "true" if submodules else "false"
     expr = {
-        "git": f"pkgs.fetchgit {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; fetchSubmodules = {flag(submodules)}; leaveDotGit = {flag(leave_dot_git)}; hash = pkgs.lib.fakeHash; }}",
+        "git": f"pkgs.fetchgit {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; fetchSubmodules = {flag}; hash = pkgs.lib.fakeHash; }}",
         "hg": f'pkgs.fetchhg {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; hash = pkgs.lib.fakeHash; }}',
         "svn": f'pkgs.fetchsvn {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; hash = pkgs.lib.fakeHash; }}',
         "bzr": f'pkgs.fetchbzr {{ url = {json.dumps(url)}; rev = {json.dumps(rev)}; hash = pkgs.lib.fakeHash; }}',
@@ -330,6 +330,51 @@ def prefetch(vcs, url, rev, submodules, leave_dot_git=False):
     return m.group(1)
 
 
+def git_repository(url, commit, tmp):
+    """The download entry and the served repositories of a git repository
+    at `commit`, with its submodules, recursively.
+
+    The entry's hash covers only the plain checkout, which is reproducible.
+    The raw commit object (`commitObject`, base64) lets the offline install
+    rebuild a shallow .git whose commit hashes to `commit`, and `gitlinks`
+    lists the submodule commits its tree points at."""
+    directory = tempfile.mkdtemp(dir=tmp)
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=directory, capture_output=True, check=True).stdout
+
+    git("init", "-q")
+    git("fetch", "-q", "--depth", "1", url, commit)
+    raw = git("cat-file", "commit", commit)
+    gitlinks = []
+    for line in git("ls-tree", "-r", commit).decode().splitlines():
+        meta, path = line.split("\t", 1)
+        mode, kind, sha = meta.split()
+        if mode == "160000":
+            gitlinks.append({"path": path, "rev": sha})
+    entries, served = [], []
+    if gitlinks:
+        config = git("config", "--blob", f"{commit}:.gitmodules", "--get-regexp", r"^submodule\..*\.(path|url)$").decode()
+        names = {}
+        for line in config.splitlines():
+            key, value = line.split(" ", 1)
+            name, field = key[len("submodule.") :].rsplit(".", 1)
+            names.setdefault(name, {})[field] = value
+        urls = {v["path"]: urllib.parse.urljoin(url.rstrip("/") + "/", v["url"]) for v in names.values()}
+        for link in gitlinks:
+            link["url"] = urls[link["path"]]
+            sub_entries, sub_served = git_repository(link["url"], link["rev"], tmp)
+            entries += sub_entries
+            served += sub_served
+    log(f"prefetching the repository {url}@{commit}")
+    entry = checkout_artifact("git", strip_credentials(url), commit, submodules=False)
+    entry["path"] += "-repository"
+    entry["git"].update(leaveDotGit=True, commitObject=base64.b64encode(raw).decode())
+    entries.append(entry)
+    served.append({"url": url, "path": entry["path"], "gitlinks": gitlinks})
+    return entries, served
+
+
 def hg_node(url, revision):
     """The full node of a revision of a Mercurial repository (its tip when
     no revision is given)."""
@@ -341,15 +386,14 @@ def hg_node(url, revision):
     return result.stdout.split()[0].rstrip("+")
 
 
-def checkout_artifact(vcs, url, rev, submodules, leave_dot_git=False):
-    """A download entry of the shared purifier library for a checkout."""
+def checkout_artifact(vcs, url, rev, submodules):
+    """A download entry of the nix-purifiers/purifier library for a
+    checkout."""
     path = f"vcs/{re.sub(r'[^A-Za-z0-9._-]+', '-', url.rstrip('/').split('/')[-1])}-{rev[:12]}"
-    if leave_dot_git:
-        path += "-repository"
     fields = {"url": url, "rev": rev}
     if vcs == "git":
-        fields.update(submodules=submodules, leaveDotGit=leave_dot_git)
-    return {"path": path, vcs: fields, "hash": prefetch(vcs, url, rev, submodules, leave_dot_git)}
+        fields.update(submodules=submodules, leaveDotGit=False, commitObject=None)
+    return {"path": path, vcs: fields, "hash": prefetch(vcs, url, rev, submodules)}
 
 
 # Inputs.
@@ -591,12 +635,14 @@ def lock(ns):
                         {"vcs": vcs_info["vcs"], "url": info["url"], "rev": commit, "version": item["metadata"]["version"], "path": entry["path"]}
                     )
                     continue
-                log(f"prefetching the repository {info['url']}@{commit}")
-                entry = checkout_artifact("git", strip_credentials(info["url"]), commit, submodules=True, leave_dot_git=True)
-                artifacts[entry["path"]] = entry
-                repositories.append(
-                    {"url": info["url"], "revision": vcs_info.get("requested_revision") or commit, "path": entry["path"], "version": item["metadata"]["version"]}
-                )
+                entries, served = git_repository(info["url"], commit, tmp)
+                for entry in entries:
+                    artifacts[entry["path"]] = entry
+                # The repository pip asked for carries the revision it asked
+                # by and the version; its submodules are served at their
+                # commits.
+                served[-1].update(revision=vcs_info.get("requested_revision") or commit, version=item["metadata"]["version"])
+                repositories += served
             elif "archive_info" in info and not info["url"].startswith((proxy.base, "file:")) and info["url"] not in sources:
                 # A URL that another package names as a source. pip
                 # downloads it itself, so the offline install answers the

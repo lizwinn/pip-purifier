@@ -33,6 +33,7 @@ version, as they did from the real repository.
 """
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -84,19 +85,56 @@ def tag(directory, version):
     git(directory, "tag", version)
 
 
+def rebuild_git(directory, rev, commit_object, gitlinks):
+    """Makes the plain checkout in `directory` a shallow git repository
+    whose HEAD is the commit `rev`: its files and submodule commits become
+    the index, the recorded commit object is written, and both are checked
+    against the lock."""
+    raw = base64.b64decode(commit_object)
+    git(directory, "init", "-q")
+    links = {link["path"] for link in gitlinks}
+    files = []
+    for root, dirs, names in os.walk(directory):
+        rel_root = os.path.relpath(root, directory)
+        if rel_root == ".":
+            dirs[:] = [d for d in dirs if d != ".git"]
+        dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)) not in links]
+        files += [os.path.normpath(os.path.join(rel_root, n)) for n in names]
+    if files:
+        subprocess.run(["git", "update-index", "--add", "-z", "--stdin"], cwd=directory, input="\0".join(files).encode(), check=True)
+    for link in gitlinks:
+        git(directory, "update-index", "--add", "--cacheinfo", f"160000,{link['rev']},{link['path']}")
+    tree = subprocess.run(["git", "write-tree"], cwd=directory, capture_output=True, text=True, check=True).stdout.strip()
+    expected_tree = raw.split(b"\n", 1)[0].split()[1].decode()
+    if tree != expected_tree:
+        raise SystemExit(f"pip-purifier: the checkout of {rev} does not make the tree its commit names ({tree}, not {expected_tree}).")
+    commit = subprocess.run(
+        ["git", "hash-object", "-t", "commit", "-w", "--stdin"], cwd=directory, input=raw, capture_output=True, check=True
+    ).stdout.decode().strip()
+    if commit != rev:
+        raise SystemExit(f"pip-purifier: the recorded commit object hashes to {commit}, not {rev}.")
+    with open(os.path.join(directory, ".git", "shallow"), "w") as f:
+        f.write(rev + "\n")
+    git(directory, "update-ref", "refs/heads/main", rev)
+    git(directory, "symbolic-ref", "HEAD", "refs/heads/main")
+
+
 def serve_repositories(inputs, tmp, env):
     """Points git at a local clone of each repository that another package
-    names as a source. Each clone is a writable copy of the store clone,
-    with the revision pip asks for as a tag on the locked commit, and the
-    version as a tag when the revision is a commit."""
+    names as a source, and of each of its submodules. Each clone is a
+    writable copy of the locked checkout with a rebuilt .git; the repository
+    pip asked for carries the revision it asked by as a tag on the locked
+    commit, or the version when the revision is a commit."""
     for n, repository in enumerate(load(inputs, "repositories.json")):
         copy = os.path.join(tmp, "repositories", str(n))
         shutil.copytree(repository["path"], copy, symlinks=True)
         subprocess.run(["chmod", "-R", "u+w", copy], check=True)
-        revision = repository["revision"]
-        names = [revision] if not re.fullmatch(r"[0-9a-f]{40}", revision) else [repository["version"]]
-        for name in names:
-            git(copy, "tag", "-f", name, "HEAD")
+        rebuild_git(copy, repository["rev"], repository["commitObject"], repository["gitlinks"])
+        revision = repository.get("revision")
+        if revision:
+            names = [revision] if not re.fullmatch(r"[0-9a-f]{40}", revision) else [repository["version"]]
+            for name in names:
+                git(copy, "tag", "-f", name, "HEAD")
         # The URL pip clones, with and without ".git": git applies the
         # longest matching insteadOf, so each form maps to the clone.
         base = repository["url"].removesuffix(".git")

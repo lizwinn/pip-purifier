@@ -50,8 +50,9 @@
   "repositories": [
     {
       "url": "https://github.com/pytest-dev/iniconfig",
-      "revision": "v2.1.0",
       "path": "vcs/iniconfig-34793a6417e3-repository",
+      "gitlinks": [],
+      "revision": "v2.1.0",
       "version": "2.1.0"
     }
   ],
@@ -61,6 +62,7 @@
       "path": "3.2.3.tar.gz"
     }
   ],
+  "shims": [],
   "artifacts": [
     {
       "path": "1.17.0.tar.gz",
@@ -158,7 +160,8 @@
         "url": "https://github.com/python-attrs/attrs",
         "rev": "3dca08ce5bbe673d7df25f44f3dda92505d1043d",
         "submodules": true,
-        "leaveDotGit": false
+        "leaveDotGit": false,
+        "commitObject": null
       },
       "hash": "sha256-Xndfdo4U573e71orFyGEoitFM2WS5Z7Gs395JFmdu9o="
     },
@@ -167,10 +170,11 @@
       "git": {
         "url": "https://github.com/pytest-dev/iniconfig",
         "rev": "34793a6417e35e511d0c17ffdd8a02ade0f9568e",
-        "submodules": true,
-        "leaveDotGit": true
+        "submodules": false,
+        "leaveDotGit": true,
+        "commitObject": "dHJlZSAxYjI3YWNmY2UzZmQ0MTJkZjRiYjA4YTVkNGI5NDViMGU3OTkzYzNjCnBhcmVudCAxMzY0MzVkMGE0MzQ1YmIwNDhkY2E5OGU3YzJmNGU5MzhkNzQ1MjFiCmF1dGhvciBSb25ueSBQZmFubnNjaG1pZHQgPG9wZW5zb3VyY2VAcm9ubnlwZmFubnNjaG1pZHQuZGU+IDE3NDI0MDUzMDcgKzAxMDAKY29tbWl0dGVyIFJvbm55IFBmYW5uc2NobWlkdCA8b3BlbnNvdXJjZUByb25ueXBmYW5uc2NobWlkdC5kZT4gMTc0MjQwNTMwNyArMDEwMAoKcHJlLWNvbW1pdAo="
       },
-      "hash": "sha256-OoTOSVqShIwkgeLYG0Fmd2WjkfH3ZUBFXIC4TFWC3Go="
+      "hash": "sha256-Aq7Llm7ZTxlis1/2QyXxQVMi2aKoE9kpEAwrOCzGMns="
     },
     {
       "path": "vcs_versioning-2.6.0-py3-none-any.whl",

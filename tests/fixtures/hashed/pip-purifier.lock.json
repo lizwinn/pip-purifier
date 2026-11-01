@@ -29,6 +29,7 @@
   "sources": {},
   "repositories": [],
   "replays": [],
+  "shims": [],
   "artifacts": [
     {
       "path": "idna-3.10-py3-none-any.whl",

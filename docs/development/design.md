@@ -16,8 +16,10 @@ The lock run then:
 2. runs `pip install --report` into a scratch venv, which resolves,
    downloads and builds everything for this system;
 3. records each VCS requirement's commit with the hash nixpkgs' fetcher
-   computes, each URL requirement's file, and each git repository that a
-   package names in its own metadata, as a clone with `.git`;
+   computes, each URL requirement's file, each URL and repository that a
+   package names in its own metadata, and for a git repository of that
+   kind its raw commit object and submodule commits (`commitObject`,
+   `gitlinks`), from which the offline install rebuilds a shallow `.git`;
 4. records the outputs: the programs of the venv, and the sdist and wheel
    of each local project, built with `pip wheel` and `python -m build`;
 5. for each other system, resolves with `--platform` and
@@ -51,6 +53,10 @@ pip builds a local directory in place, so each checkout is copied to a
 writable directory first. The copy, and in the Nix build each local project
 without `.git`, becomes a one-commit git repository tagged with the
 recorded version, so setuptools-scm and hatch-vcs derive the same version
-as in the lock run. A repository named in package metadata is served to the
-git that pip runs through `url.<copy>.insteadOf`, with the revision pip
-asks for as a tag on the locked commit.
+as in the lock run. A git repository named in package metadata is served to
+the git that pip runs through `url.<copy>.insteadOf`. The copy is the plain
+checkout with a `.git` rebuilt from its files, its submodule commits and the
+recorded commit object, checked against the locked tree and commit, with
+the revision pip asks for as a tag. A Mercurial, Subversion or Bazaar
+repository named in metadata is answered by `nix/lib/vcs_shim.py`, and a URL
+named in metadata by `mitm-cache replay`.
