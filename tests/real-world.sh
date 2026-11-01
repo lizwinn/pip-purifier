@@ -52,21 +52,18 @@ cat > flake.nix <<EOF
       project = pip-purifier.lib.pip-purifier.buildPipProject {
         pkgs = nixpkgs.legacyPackages.\${system};
         src = ./.;
-        checkPhase = "pytest -q tests";
+        checkPhase = "pytest tests";
       };
     in {
-      packages.\${system} = {
-        default = project.environment;
-        tests = project.tests;
-        release = project.release;
-      };
+      packages.\${system}.default = project.packages.click;
+      checks.\${system}.tests = project.tests;
     };
 }
 EOF
 system=$(nix eval --impure --raw --expr builtins.currentSystem)
 sed -i "s/builtins.currentSystem or \"x86_64-linux\"/\"$system\"/" flake.nix
-nix build --no-link -L 'path:.#tests'
-nix build --no-link 'path:.#release'
+nix build --no-link -L "path:.#checks.$system.tests"
+nix build --no-link "path:.#packages.$system.default"
 
 echo "== the everyday loop offline" >&2
 "$cli" prefetch

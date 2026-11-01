@@ -204,12 +204,41 @@ These are refused:
 
 ## Examples
 
-CI locks and builds [pallets/click](https://github.com/pallets/click)
-8.1.8 at commit `934813e`, with `-r requirements/tests.txt -e .`, on both
-systems (`tests/real-world.sh`). The lock run takes about 8 seconds, and a
-relock reproduces the lockfile byte for byte. The test suite passes in the
-Nix sandbox and in the offline `.venv`, and pyright resolves the imports
-from that `.venv`.
+[pallets/click](https://github.com/pallets/click) installs its test
+dependencies with `pip install -r requirements/tests.txt -e .`. In a clone
+of it, lock those arguments, and work offline from `.venv`:
+
+```zsh
+nix run github:nix-purifiers/pip-purifier -- lock -- -r requirements/tests.txt -e .
+nix run github:nix-purifiers/pip-purifier -- prefetch
+.venv/bin/pytest tests
+```
+
+Then add a `flake.nix` that builds its sdist and wheel and runs its tests in
+the sandbox:
+
+```nix
+{
+  inputs.pip-purifier.url = "github:nix-purifiers/pip-purifier";
+  inputs.nixpkgs.follows = "pip-purifier/nixpkgs";
+
+  outputs = { nixpkgs, pip-purifier, ... }:
+    let
+      project = pip-purifier.lib.pip-purifier.buildPipProject {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        src = ./.;
+        checkPhase = "pytest tests";
+      };
+    in
+    {
+      packages.x86_64-linux.default = project.packages.click;
+      checks.x86_64-linux.tests = project.tests;
+    };
+}
+```
+
+`nix build` makes the sdist and wheel, and `nix flake check` runs the
+tests. Commit `pip-purifier.lock.json` and `flake.nix` with the project.
 
 ## Credits
 
