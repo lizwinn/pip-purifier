@@ -33,7 +33,31 @@ nix run github:nix-purifiers/pip-purifier -- lock -- -r requirements/dev.txt -e 
 ```
 
 The flake's `overlays.default` adds the scope `pip-purifier` to a package set,
-which holds `buildPipProject` and the `pip-purifier` command. Build the project with it:
+which holds `buildPipProject` and the `pip-purifier` command. Build the
+installed environment from the project's directory, without adding a Nix
+file:
+
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/pip-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.pip-purifier.buildPipProject { src = ./.; }).environment'
+```
+
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
+
+A flake is optional. It can live in the project or in a separate
+packaging repository and call the builder directly:
 
 ```nix
 {
@@ -57,15 +81,6 @@ which holds `buildPipProject` and the `pip-purifier` command. Build the project 
       checks.x86_64-linux.tests = project.tests;
     };
 }
-```
-
-The scope is a package set for `callPackage`, so a package of your own
-takes it by name:
-
-```nix
-# package.nix
-{ pip-purifier }:
-(pip-purifier.buildPipProject { src = ./.; }).packages.greet
 ```
 
 `buildPipProject` gives:
