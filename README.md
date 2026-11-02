@@ -101,7 +101,8 @@ packaging repository and call the builder directly:
   inputs.pip-purifier.url = "github:nix-purifiers/pip-purifier";
   inputs.nixpkgs.follows = "pip-purifier/nixpkgs";
 
-  outputs = { nixpkgs, pip-purifier, ... }:
+  outputs =
+    { nixpkgs, pip-purifier, ... }:
     let
       pkgs = import nixpkgs {
         system = "x86_64-linux";
@@ -165,15 +166,14 @@ For an ad hoc build, the builder can also be evaluated directly from the
 project root. Replace the example package name with one from your project:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/pip-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.pip-purifier.buildPipProject { src = ./.; }).environment'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/pip-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.pip-purifier.buildPipProject { src = ./.; }).environment'
 ```
 
 This uses the purifier's pinned nixpkgs, matching the lock command above.
@@ -200,7 +200,8 @@ set `PIP_PURIFIER_LOCKFILE`, and pass the same path to `buildPipProject` as
 `lockFile`:
 
 ```zsh
-PIP_PURIFIER_LOCKFILE=../packaging/pip-purifier.lock.json pip-purifier lock
+PIP_PURIFIER_LOCKFILE=../packaging/pip-purifier.lock.json \
+  pip-purifier lock
 ```
 
 The same goes for `pylock.toml`, through `--tool-lockfile` or
@@ -282,7 +283,8 @@ dependencies with `pip install -r requirements/tests.txt -e .`. In a clone
 of it, lock those arguments, and work offline from `.venv`:
 
 ```zsh
-nix run github:nix-purifiers/pip-purifier -- lock -- -r requirements/tests.txt -e .
+nix run github:nix-purifiers/pip-purifier -- lock -- -r \
+  requirements/tests.txt -e .
 nix run github:nix-purifiers/pip-purifier -- prefetch
 .venv/bin/pytest tests
 ```
