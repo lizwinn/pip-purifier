@@ -27,7 +27,8 @@ let
       name = "source";
       filter =
         p: type:
-        !builtins.elem (baseNameOf p) [
+        !(lib.hasSuffix ".egg-info" (baseNameOf p))
+        && !builtins.elem (baseNameOf p) [
           ".git"
           ".venv"
           ".pip-purifier"
@@ -36,6 +37,8 @@ let
           ".mypy_cache"
           ".tox"
           ".nox"
+          "build"
+          "dist"
         ];
     };
 
@@ -64,5 +67,14 @@ let
     }
   );
 in
-lib.attrByPath (lib.splitString "." attr) (throw "pip-purifier: the project has no output ${attr}")
-  project
+if lock.projectInputs or [ ] != [ ] && (attr == "release" || lib.hasPrefix "packages." attr) then
+  (
+    if attr == "release" then
+      project
+    else
+      lib.attrByPath (lib.splitString "." attr) (throw "pip-purifier: the project has no output ${attr}")
+        project
+  ).projections.python
+else
+  lib.attrByPath (lib.splitString "." attr) (throw "pip-purifier: the project has no output ${attr}")
+    project

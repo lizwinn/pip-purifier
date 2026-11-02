@@ -74,6 +74,31 @@ lock run says so and resolves afresh.
 every version itself, so to update such a project, run `pip lock`, then
 `pip-purifier lock`.
 
+## Dependencies from another purified project
+
+```zsh
+nix shell 'github:nix-purifiers/pip-purifier'
+pip-purifier lock \
+  --input 'github:owner/library/<rev>#library'
+pip-purifier prefetch
+source .venv/bin/activate
+```
+
+The producer exposes `projections.python`; uv and PDM producers use the same
+format. Repeat `--input` for more producers. Pip resolves those packages
+from their Nix-built wheels, without changing project requirements. The
+lock records the Nix source pin and omits supplied wheels from downloads.
+Relocking keeps that pin; `update` refreshes it.
+
+Use `pip-purifier pip` for pip operations, including `check`, so they apply
+the same bindings. Without a lockfile, it warns and runs ordinary pip.
+
+Each local package and the complete build expose `projections.python`.
+Wheelhouses include the native runtime dependency graph, with Nix-derived
+versions and rewritten dependency metadata for ordinary installers.
+Composed publishing uploads these wheels. Use an index accepting local
+versions, or consume the repository with `--find-links`.
+
 ## Building the project with Nix
 
 Once the native development workflow is working, you can also build and

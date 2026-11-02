@@ -203,6 +203,32 @@ let
   };
 in
 {
+  composition-producer = project.packages.greet;
+
+  python-projection =
+    runCommand "pip-native-projection-downstream"
+      {
+        nativeBuildInputs = [
+          pkgs.uv
+          pkgs.python3
+        ];
+      }
+      ''
+        export HOME=$TMPDIR UV_CACHE_DIR=$TMPDIR/uv-cache UV_PYTHON_DOWNLOADS=never
+        uv venv --python ${pkgs.python3.interpreter} downstream
+        uv pip install --python downstream/bin/python --no-index \
+          --find-links ${project.packages.greet.projections.python} greet
+        test "$(downstream/bin/greet)" = 'hello attrs=25.3.0 docopt=0.6.2 yaml=6.0.3'
+        downstream/bin/python - <<'PYTHON'
+        from importlib.metadata import version
+        import json
+        assert '+nix.' in version('greet')
+        catalog = json.load(open('${project.packages.greet.projections.python.catalog}'))
+        assert sorted(module['name'] for module in catalog['modules']) == ['attrs', 'docopt', 'greet', 'pyyaml']
+        PYTHON
+        touch $out
+      '';
+
   project = runs "project" project.programs.greet "hello attrs=25.3.0 docopt=0.6.2 yaml=6.0.3";
 
   # The local project's sdist and wheel, under the names the lockfile

@@ -87,7 +87,7 @@ let
   # the last segment of the URL, without its query or fragment. `artifacts`
   # holds the other downloads.
   pylockEntries =
-    path:
+    excluded: path:
     let
       data = builtins.fromTOML (builtins.readFile path);
       files =
@@ -114,7 +114,16 @@ let
         };
       };
     in
-    map entry (filter (file: file ? url) (lib.concatMap files (data.packages or [ ])));
+    map entry (
+      filter (file: file ? url) (
+        lib.concatMap files (
+          filter (
+            package:
+            !(lib.elem (lib.toLower (lib.replaceStrings [ "_" "." ] [ "-" "-" ] package.name)) excluded)
+          ) (data.packages or [ ])
+        )
+      )
+    );
 
   isPylock = rel: builtins.match "pylock(\\.[^/]+)?\\.toml" (baseNameOf rel) != null;
 
@@ -203,7 +212,9 @@ in
       downloads =
         lock.artifacts
         ++ lib.unique (
-          lib.concatMap (rel: pylockEntries (resolve rel)) (filter isPylock (attrNames lock.inputs))
+          lib.concatMap (rel: pylockEntries (lock.projectInputNames or [ ]) (resolve rel)) (
+            filter isPylock (attrNames lock.inputs)
+          )
         );
     in
     {

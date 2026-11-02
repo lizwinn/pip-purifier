@@ -86,6 +86,7 @@
   # A command that tests the project, run in a copy of the source with the
   # environment's programs on PATH.
   checkPhase ? null,
+  projectDependencies ? null,
 }:
 let
   inherit (builtins)
@@ -126,6 +127,37 @@ let
     else
       read.lockfile
   );
+
+  inputRecords = checked.projectInputs or [ ];
+  dependencies =
+    if projectDependencies == null then
+      purifier.lockedProjectInputs {
+        inputs = inputRecords;
+        inherit system;
+      }
+    else
+      projectDependencies;
+  supplied = purifier.projectInputs {
+    inherit dependencies;
+    formats = [ "python" ];
+  };
+  inputViews = writeText "pip-python-views.json" (
+    toJSON (
+      map (input: {
+        repository = toString input.repository;
+        catalog = input.repository.catalog;
+      }) supplied
+    )
+  );
+  inputBindings =
+    runCommand "pip-python-bindings"
+      {
+        nativeBuildInputs = [ (python.withPackages (ps: [ ps.packaging ])) ];
+      }
+      ''
+        python ${./python_bindings.py} --tools ${purifier.projectInputsTool} \
+          --views ${inputViews} --old-repositories ${writeText "old-repositories.json" "[]"} --destination "$out"
+      '';
 
   fetchArgs = {
     inherit
@@ -204,6 +236,7 @@ let
 
   inputs = runCommand "pip-purifier-inputs" { } ''
     mkdir -p $out
+    ${lib.optionalString (supplied != [ ]) "ln -s ${inputBindings}/inputs.json $out/python-inputs.json"}
     ln -s ${wheelhouse} $out/wheelhouse
     mkdir -p $out/replay
     ${concatMapStrings (replay: ''
@@ -223,6 +256,7 @@ let
     root = ./.;
     fileset = lib.fileset.unions [
       ./offline.py
+      ./pip_runner.py
       ./pip_inputs.py
       ./vcs_shim.py
     ];
@@ -231,6 +265,7 @@ let
   pip = python.withPackages (ps: [
     ps.pip
     ps.build
+    ps.packaging
   ]);
 
   # The project, with its `pathSources` beside it where its relative paths
@@ -282,6 +317,7 @@ let
         runHook preBuild
         ${unpack}
         ${python.interpreter} -m venv --without-pip $out
+        export PIP_PURIFIER_EXPORT_WHEELS=$out/nix-support/wheels
         ${pip.interpreter} ${scripts}/offline.py --project $work --inputs ${inputs} --venv $out --no-editable
         runHook postBuild
       '';
@@ -334,6 +370,7 @@ let
           dontFixup = true;
           passthru = {
             inherit wheel;
+            projections = projectionFor [ name ] name;
             inherit (package) sdist version;
             files = {
               ${wheel} = "${drv}/${wheel}";
@@ -345,6 +382,40 @@ let
     in
     drv
   ) checked.outputs.packages;
+
+  projectionFor =
+    roots: label:
+    let
+      scope =
+        runCommand "${label}-publication-scope"
+          {
+            nativeBuildInputs = [ (python.withPackages (ps: [ ps.packaging ])) ];
+            outputs = [
+              "out"
+              "runtime"
+            ];
+            repositories = toJSON (map toString (lib.attrValues packages));
+            roots = toJSON roots;
+            passAsFile = [
+              "repositories"
+              "roots"
+            ];
+          }
+          ''
+            python ${./wheel_scope.py} --environment ${environment} \
+              --repositories "$repositoriesPath" --roots "$rootsPath" \
+              --destination "$out" --runtime "$runtime"
+            mkdir -p "$runtime/nix-support"
+            printf '%s\n' ${environment} > "$runtime/nix-support/inputs"
+          '';
+    in
+    purifier.pythonProjections {
+      repository = scope.out;
+      runtimeRepository = scope.runtime;
+      inherit dependencies runCommand;
+      python3 = python;
+    };
+  projections = projectionFor null name;
 
   release =
     if packages == { } then
@@ -379,6 +450,7 @@ in
 {
   inherit
     packages
+    projections
     tests
     release
     environment

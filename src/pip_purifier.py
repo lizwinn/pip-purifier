@@ -19,6 +19,7 @@ import http.client
 import io
 import json
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -36,6 +37,8 @@ sys.path.insert(0, NIX_LIB)
 
 import offline  # noqa: E402
 import pip_inputs  # noqa: E402
+import python_bindings  # noqa: E402
+sys.path.insert(0, os.environ.get("PIP_PURIFIER_PROJECT_INPUTS_TOOLS", str(Path(NIX_LIB).parent / "purifier/tools")))
 
 # The lock format version. nix/lib/lock-version.nix reads the same.
 with open(os.path.join(NIX_LIB, "lock-version.nix")) as _f:
@@ -586,7 +589,10 @@ def lock_environment(tmp, proxy, index, extra, links):
 
 def run_pip(args, env, cwd, check=True):
     log(" ".join(args))
-    result = subprocess.run(PIP + args, env=env, cwd=cwd)
+    command = [sys.executable, os.path.join(NIX_LIB, "pip_runner.py"), *args]
+    if os.environ.get("PIP_PURIFIER_BINDINGS"):
+        env["PIP_PURIFIER_BINDINGS"] = os.environ["PIP_PURIFIER_BINDINGS"]
+    result = subprocess.run(command, env=env, cwd=cwd)
     if check and result.returncode != 0:
         die(f"pip failed with exit status {result.returncode}")
     return result.returncode == 0
@@ -626,7 +632,7 @@ def previous_files(path):
     return keep
 
 
-def lock(ns):
+def native_lock(ns):
     project = os.getcwd()
     lockfile = lockfile_path(ns, project)
     # A pylock.toml kept outside the project starts as a copy of the
@@ -650,7 +656,10 @@ def lock(ns):
 
     with tempfile.TemporaryDirectory() as tmp, Proxy() as proxy:
         env = lock_environment(tmp, proxy, index, extra, links)
-        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "lock", index=proxy.upstream, pylock=pylock)
+        configuration = os.environ.get("PIP_PURIFIER_BINDINGS")
+        provided = json.loads(Path(configuration).read_text())["modules"] if configuration else {}
+        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "lock",
+                                      index=proxy.upstream, pylock=pylock, provided=provided)
         lock_args = rewriter.args(args)
         # A pylock.toml pins every version, and does not record the
         # requirements `pip lock` resolved it from.
@@ -886,6 +895,42 @@ def lock(ns):
     log(f"wrote {lockfile} with {len(lock['artifacts'])} downloads")
 
 
+def lock(ns):
+    project = os.getcwd()
+    lockfile = lockfile_path(ns, project)
+    try:
+        previous = json.loads(Path(lockfile).read_text()).get("projectInputs", [])
+    except (OSError, ValueError):
+        previous = []
+    references = getattr(ns, "input", None)
+    if references is None:
+        references = [entry["reference"] for entry in previous]
+    if not references:
+        return native_lock(ns)
+    import project_inputs
+    records = project_inputs.pin(references, previous, refresh=ns.update is not None)
+    views = project_inputs.python_views(records, os.path.join(roots(lockfile), "project-inputs"))
+    configuration = python_bindings.write(views, [], Path(roots(lockfile)) / "bindings") if views else None
+    previous_environment = os.environ.get("PIP_PURIFIER_BINDINGS")
+    try:
+        if configuration:
+            os.environ["PIP_PURIFIER_BINDINGS"] = str(configuration)
+        native_lock(ns)
+    finally:
+        if previous_environment is None:
+            os.environ.pop("PIP_PURIFIER_BINDINGS", None)
+        else:
+            os.environ["PIP_PURIFIER_BINDINGS"] = previous_environment
+    if records:
+        data = json.loads(Path(lockfile).read_text())
+        data["projectInputs"] = records
+        data["projectInputNames"] = sorted(json.loads(Path(configuration).read_text())["modules"])
+        data["hash"] = lock_hash(data)
+        with open(lockfile, "w") as destination:
+            json.dump(data, destination, indent=2, sort_keys=True)
+            destination.write("\n")
+
+
 def update(ns):
     """`lock` with the `pip install` arguments that the existing lockfile
     records, keeping none of the files of the named packages, or none at
@@ -976,7 +1021,11 @@ def prefetch_command(ns):
 
 def pip(ns):
     project = os.getcwd()
-    inputs = inputs_of(project, lockfile_path(ns, project), tool_lockfile_path(ns))
+    lockfile = lockfile_path(ns, project)
+    if not os.path.exists(lockfile):
+        log("warning: no lockfile; pip is resolving dependencies impurely")
+        raise SystemExit(subprocess.run(PIP + ns.pip_args).returncode)
+    inputs = inputs_of(project, lockfile, tool_lockfile_path(ns))
     env = offline.environment(inputs)
     env["PIP_CONSTRAINT"] = os.path.join(inputs, "pins.txt")
     offline.run_pip(PIP + ns.pip_args, project, env, stdout=True)
@@ -990,7 +1039,8 @@ def publish(ns):
     if ns.package and ns.package not in packages:
         die(f"the project has no package {ns.package}; its packages are: {', '.join(packages) or 'none'}")
     out = nix_build(project, lockfile, f"packages.{ns.package}" if ns.package else "release", pylock=pylock)
-    files = sorted(os.path.join(out, n) for n in os.listdir(out))
+    files = sorted(os.path.join(out, n) for n in os.listdir(out)
+                   if n.endswith((".whl", ".tar.gz", ".zip")) and os.path.isfile(os.path.join(out, n)))
     if not files:
         die(f"{out} holds no distributions")
     # uv publish, because twine refuses the metadata 2.5 that current
@@ -1008,6 +1058,7 @@ def main():
     p = commands.add_parser("lock", help="write pip-purifier.lock.json")
     p.add_argument("--lockfile", help=lockfile_help)
     p.add_argument("--tool-lockfile", help=tool_lockfile_help)
+    p.add_argument("--input", action="append", help="a Nix producer exposing projections.python")
     p.add_argument("--python", help="the Python interpreter pip installs for (default: the Python of this package set)")
     p.add_argument("--system", action="append", choices=list(SYSTEMS), help="a Nix system to lock for (default: all)")
     p.add_argument("pip_args", nargs="*", metavar="-- PIP-ARG", help="the arguments of `pip install` (default: -r pylock.toml, -r requirements.txt, or .)")
@@ -1019,6 +1070,7 @@ def main():
     )
     p.add_argument("--lockfile", help=lockfile_help)
     p.add_argument("--tool-lockfile", help=tool_lockfile_help)
+    p.add_argument("--input", action="append", help="a Nix producer exposing projections.python")
     p.add_argument("--python", help="the Python interpreter pip installs for (default: the Python of this package set)")
     p.add_argument("--system", action="append", choices=list(SYSTEMS), help="a Nix system to lock for (default: all)")
     p.add_argument("update", nargs="*", metavar="PACKAGE", help="a package to update (default: every package)")

@@ -66,6 +66,9 @@ def environment(inputs):
         PIP_NO_INPUT="1",
         PIP_PROGRESS_BAR="off",
     )
+    bindings = os.path.join(inputs, "python-inputs.json")
+    if os.path.exists(bindings):
+        env["PIP_PURIFIER_BINDINGS"] = bindings
     return env
 
 
@@ -236,7 +239,13 @@ def install(pip, project, inputs, venv, editable, extra=(), pylock=None):
                 tag(copy, versions[url])
             return copy
 
-        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "offline", local=local, editable=editable, pylock=pylock)
+        configuration = os.path.join(inputs, "python-inputs.json")
+        provided = {}
+        if os.path.exists(configuration):
+            with open(configuration) as source:
+                provided = json.load(source)['modules']
+        rewriter = pip_inputs.Rewriter(project, os.path.join(tmp, "inputs"), "offline",
+                                      local=local, editable=editable, pylock=pylock, provided=provided)
         rewritten = rewriter.args(args)
         if not editable:
             for rel in rewriter.dirs:
@@ -257,6 +266,8 @@ def install(pip, project, inputs, venv, editable, extra=(), pylock=None):
             *rewritten,
         ]
         env = environment(inputs)
+        if os.environ.get("PIP_PURIFIER_EXPORT_WHEELS"):
+            env["PIP_PURIFIER_EXPORT_WHEELS"] = os.environ["PIP_PURIFIER_EXPORT_WHEELS"]
         serve_repositories(inputs, tmp, env)
         serve_shims(inputs, tmp, env)
         replayer = serve_replays(inputs, tmp, env)
@@ -275,6 +286,8 @@ def run_pip(command, cwd, env, stdout=False):
     command that fixes it. With `stdout`, pip's standard output goes to
     standard output untouched, and only its errors are read; otherwise
     both go to standard error."""
+    if len(command) >= 3 and command[1:3] == ["-m", "pip"]:
+        command = [command[0], os.path.join(os.path.dirname(__file__), "pip_runner.py"), *command[3:]]
     if stdout:
         process = subprocess.Popen(command, cwd=cwd, env=env, stderr=subprocess.PIPE, text=True)
         lines = process.stderr

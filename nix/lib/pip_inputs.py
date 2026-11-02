@@ -18,6 +18,8 @@ requirements (`specs`) and the local project directories (`dirs`).
 """
 
 import os
+import hashlib
+from pathlib import Path
 import re
 import shlex
 import tomllib
@@ -206,9 +208,10 @@ class Rewriter:
       of the project's pylock.toml.
     """
 
-    def __init__(self, project, out, mode, index=None, local=None, editable=True, pylock=None):
+    def __init__(self, project, out, mode, index=None, local=None, editable=True, pylock=None, provided=None):
         self.project = os.path.abspath(project)
         self.pylock_path = pylock
+        self.provided = provided or {}
         self.out = os.path.abspath(out)
         self.mode = mode
         self.index = index
@@ -263,6 +266,10 @@ class Rewriter:
         """A rewritten requirement specifier (without `-e`), and whether it
         stays editable."""
         parsed = parse_spec(spec)
+        name = parsed.get("name")
+        module = self.provided.get(re.sub(r"[-_.]+", "-", name.split("[")[0].lower())) if name else None
+        if module:
+            return name + " @ " + Path(module['wheel']).as_uri() + parsed.get("rest", ""), False
         if parsed["kind"] == "index":
             return spec, editable
         if parsed["kind"] == "path":
@@ -398,6 +405,17 @@ class Rewriter:
         base = os.path.dirname(path)
         for package in data.get("packages", []):
             name = package.get("name")
+            module = self.provided.get(re.sub(r"[-_.]+", "-", name.lower())) if name else None
+            if module:
+                wheel = module['wheel']
+                with open(wheel, 'rb') as source:
+                    digest = hashlib.file_digest(source, 'sha256').hexdigest()
+                package['version'] = module['version']
+                for key in ('wheels', 'sdist', 'archive', 'vcs', 'directory'):
+                    package.pop(key, None)
+                package['wheels'] = [{'name': os.path.basename(wheel), 'path': wheel,
+                                      'hashes': {'sha256': digest}}]
+                continue
             if name and "version" in package:
                 self.pin(name, package["version"])
             for wheel in package.get("wheels", []) + ([package["sdist"]] if "sdist" in package else []):

@@ -27,6 +27,7 @@ let
   python = python3.withPackages (ps: [
     ps.pip
     ps.build
+    ps.packaging
   ]);
 in
 stdenvNoCC.mkDerivation {
@@ -62,6 +63,7 @@ stdenvNoCC.mkDerivation {
           uv
         ]
       } \
+      --set PIP_PURIFIER_PROJECT_INPUTS_TOOLS ${purifierSource}/tools \
       --set PIP_PURIFIER_NIX_LIB $out/share/pip-purifier/nix-lib \
       --set PIP_PURIFIER_PYTHON ${python3.interpreter} \
       --set PIP_PURIFIER_NIXPKGS ${path}
