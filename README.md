@@ -5,16 +5,11 @@ Nix-resolved dependencies. Use the normal build and test commands in your
 working tree; building the project itself in the Nix sandbox is an
 optional next step.
 
-It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
-
 Where a project has a `pylock.toml` or a requirements file with `--hash`
 pins, pip-purifier locks those versions. They also constrain the
 environments in which pip builds sdists, through pip's
 `--build-constraint`. The Nix build reads the files that a `pylock.toml`
 names, with their URLs and hashes, from the `pylock.toml` itself.
-
-pip-purifier is part of [nix-purifiers](https://nix-purifiers.github.io),
-and meets the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
 ## Installation
 
