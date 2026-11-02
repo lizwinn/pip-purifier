@@ -272,9 +272,10 @@ dependencies with `pip install -r requirements/tests.txt -e .`. In a clone
 of it, lock those arguments, and work offline from `.venv`:
 
 ```zsh
-nix run github:nix-purifiers/pip-purifier -- lock -- -r \
+nix shell 'github:nix-purifiers/pip-purifier'
+pip-purifier lock -- -r \
   requirements/tests.txt -e .
-nix run github:nix-purifiers/pip-purifier -- prefetch
+pip-purifier prefetch
 .venv/bin/pytest tests
 ```
 
