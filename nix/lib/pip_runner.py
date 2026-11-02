@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 
+native_paths = sys.path.copy()
 if os.environ.get('PIP_PURIFIER_PIP_PATH'):
     sys.path.insert(0, os.environ['PIP_PURIFIER_PIP_PATH'])
 import pip
@@ -87,4 +88,7 @@ if capture:
     req_install.install_wheel = install
 
 if __name__ == '__main__':
+    # Keep SDK imports available through their package paths, while package
+    # discovery sees only the interpreter this process is installing for.
+    sys.path[:] = native_paths
     sys.exit(main())
