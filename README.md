@@ -87,7 +87,8 @@ packaging repository and call the builder directly:
 
 ```nix
 {
-  inputs.pip-purifier.url = "github:nix-purifiers/pip-purifier";
+  inputs.pip-purifier.url =
+    "github:nix-purifiers/pip-purifier";
   inputs.nixpkgs.follows = "pip-purifier/nixpkgs";
 
   outputs =
@@ -97,7 +98,9 @@ packaging repository and call the builder directly:
         system = "x86_64-linux";
         overlays = [ pip-purifier.overlays.default ];
       };
-      project = pkgs.pip-purifier.buildPipProject { src = ./.; };
+      project = pkgs.pip-purifier.buildPipProject {
+        src = ./.;
+      };
     in
     {
       packages.x86_64-linux = {
@@ -284,10 +287,12 @@ the sandbox:
 
 ```nix
 {
-  inputs.pip-purifier.url = "github:nix-purifiers/pip-purifier";
+  inputs.pip-purifier.url =
+    "github:nix-purifiers/pip-purifier";
   inputs.nixpkgs.follows = "pip-purifier/nixpkgs";
 
-  outputs = { nixpkgs, pip-purifier, ... }:
+  outputs =
+    { nixpkgs, pip-purifier, ... }:
     let
       pkgs = import nixpkgs {
         system = "x86_64-linux";
@@ -299,7 +304,8 @@ the sandbox:
       };
     in
     {
-      packages.x86_64-linux.default = project.packages.click;
+      packages.x86_64-linux.default =
+        project.packages.click;
       checks.x86_64-linux.tests = project.tests;
     };
 }
