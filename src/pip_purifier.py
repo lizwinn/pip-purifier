@@ -910,7 +910,7 @@ def lock(ns):
     import project_inputs
     records = project_inputs.pin(references, previous, refresh=ns.update is not None)
     views = project_inputs.python_views(records, os.path.join(roots(lockfile), "project-inputs"))
-    configuration = python_bindings.write(views, [], Path(roots(lockfile)) / "bindings") if views else None
+    configuration = python_bindings.write(views, [], Path(roots(lockfile)) / "bindings", python=ns.python or PYTHON) if views else None
     previous_environment = os.environ.get("PIP_PURIFIER_BINDINGS")
     try:
         if configuration:

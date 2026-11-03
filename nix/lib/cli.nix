@@ -60,6 +60,9 @@ let
       src = source root;
       lockFile = lockPath;
       lockData = lock;
+      python =
+        pkgs.${"python" + builtins.replaceStrings [ "." ] [ "" ] lock.python}
+          or (throw "pip-purifier: nixpkgs has no Python ${lock.python}");
       inherit pathSources;
     }
     // lib.optionalAttrs (pylock != "") {
